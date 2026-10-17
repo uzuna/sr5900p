@@ -4,15 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-argh = "0.1.9"
-anyhow = "1.0.66"
-barcoders = "1.0.2"
-embedded-graphics = "0.7.1"
-png = "~0.17.7"
-qrcode = "0.12.0"
-image = "^0.23"
-regex = "1"
-proc-macro2 = "1.0.70"
-ab_glyph = "=0.2.21"
-serde = { version = "=1.0.193", features = ["derive"] }
-toml = "=0.5.11"
+ab_glyph = "0.2.32"
+anyhow = "1.0.104"
+argh = "0.1.19"
+embedded-graphics = "0.8.2"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+png = "0.18.1"
+qrcode = "0.14.1"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"

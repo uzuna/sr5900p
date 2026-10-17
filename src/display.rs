@@ -95,78 +95,78 @@ fn transforms() {
     let mut td = TapeDisplay::new(2, 2);
     // 0 0
     // 0 0
-    assert_eq!(td.get_pixel(0, 0), false);
-    assert_eq!(td.get_pixel(0, 1), false);
-    assert_eq!(td.get_pixel(1, 0), false);
-    assert_eq!(td.get_pixel(1, 1), false);
+    assert!(!td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 1));
+    assert!(!td.get_pixel(1, 0));
+    assert!(!td.get_pixel(1, 1));
     td.set_pixel(0, 0, true);
     td.set_pixel(1, 1, true);
     // 1 0
     // 0 1
-    assert_eq!(td.get_pixel(0, 0), true);
-    assert_eq!(td.get_pixel(0, 1), false);
-    assert_eq!(td.get_pixel(1, 0), false);
-    assert_eq!(td.get_pixel(1, 1), true);
+    assert!(td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 1));
+    assert!(!td.get_pixel(1, 0));
+    assert!(td.get_pixel(1, 1));
     let td = td.scaled(2);
     // 1 1 0 0
     // 1 1 0 0
     // 0 0 1 1
     // 0 0 1 1
-    assert_eq!(td.get_pixel(0, 0), true);
-    assert_eq!(td.get_pixel(0, 2), false);
-    assert_eq!(td.get_pixel(2, 0), false);
-    assert_eq!(td.get_pixel(2, 2), true);
+    assert!(td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 2));
+    assert!(!td.get_pixel(2, 0));
+    assert!(td.get_pixel(2, 2));
     let td = td.rotated();
     // 0 0 1 1
     // 0 0 1 1
     // 1 1 0 0
     // 1 1 0 0
-    assert_eq!(td.get_pixel(0, 0), false);
-    assert_eq!(td.get_pixel(0, 2), true);
-    assert_eq!(td.get_pixel(2, 0), true);
-    assert_eq!(td.get_pixel(2, 2), false);
+    assert!(!td.get_pixel(0, 0));
+    assert!(td.get_pixel(0, 2));
+    assert!(td.get_pixel(2, 0));
+    assert!(!td.get_pixel(2, 2));
     let td = td.rotated();
     // 1 1 0 0
     // 1 1 0 0
     // 0 0 1 1
     // 0 0 1 1
-    assert_eq!(td.get_pixel(0, 0), true);
-    assert_eq!(td.get_pixel(0, 2), false);
-    assert_eq!(td.get_pixel(2, 0), false);
-    assert_eq!(td.get_pixel(2, 2), true);
+    assert!(td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 2));
+    assert!(!td.get_pixel(2, 0));
+    assert!(td.get_pixel(2, 2));
 
     // 3x2
     let mut td = TapeDisplay::new(3, 2);
     // 0 0 0
     // 0 0 0
-    assert_eq!(td.get_pixel(0, 0), false);
-    assert_eq!(td.get_pixel(0, 1), false);
-    assert_eq!(td.get_pixel(1, 0), false);
-    assert_eq!(td.get_pixel(1, 1), false);
-    assert_eq!(td.get_pixel(2, 0), false);
-    assert_eq!(td.get_pixel(2, 1), false);
+    assert!(!td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 1));
+    assert!(!td.get_pixel(1, 0));
+    assert!(!td.get_pixel(1, 1));
+    assert!(!td.get_pixel(2, 0));
+    assert!(!td.get_pixel(2, 1));
     td.set_pixel(0, 0, true);
     td.set_pixel(1, 1, true);
     td.set_pixel(2, 0, true);
     // 1 0 1
     // 0 1 0
-    assert_eq!(td.get_pixel(0, 0), true);
-    assert_eq!(td.get_pixel(0, 1), false);
-    assert_eq!(td.get_pixel(1, 0), false);
-    assert_eq!(td.get_pixel(1, 1), true);
-    assert_eq!(td.get_pixel(2, 0), true);
-    assert_eq!(td.get_pixel(2, 1), false);
+    assert!(td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 1));
+    assert!(!td.get_pixel(1, 0));
+    assert!(td.get_pixel(1, 1));
+    assert!(td.get_pixel(2, 0));
+    assert!(!td.get_pixel(2, 1));
     let td = td.scaled(2);
     // 1 1 0 0 1 1
     // 1 1 0 0 1 1
     // 0 0 1 1 0 0
     // 0 0 1 1 0 0
-    assert_eq!(td.get_pixel(0, 0), true);
-    assert_eq!(td.get_pixel(0, 2), false);
-    assert_eq!(td.get_pixel(2, 0), false);
-    assert_eq!(td.get_pixel(2, 2), true);
-    assert_eq!(td.get_pixel(4, 0), true);
-    assert_eq!(td.get_pixel(4, 2), false);
+    assert!(td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 2));
+    assert!(!td.get_pixel(2, 0));
+    assert!(td.get_pixel(2, 2));
+    assert!(td.get_pixel(4, 0));
+    assert!(!td.get_pixel(4, 2));
     let td = td.rotated();
     // 1 1 0 0
     // 1 1 0 0
@@ -175,10 +175,10 @@ fn transforms() {
     // 1 1 0 0
     // 1 1 0 0
     println!("{:?}", td.framebuffer);
-    assert_eq!(td.get_pixel(0, 0), true);
-    assert_eq!(td.get_pixel(0, 2), false);
-    assert_eq!(td.get_pixel(2, 0), false);
-    assert_eq!(td.get_pixel(2, 2), true);
-    assert_eq!(td.get_pixel(0, 4), true);
-    assert_eq!(td.get_pixel(2, 4), false);
+    assert!(td.get_pixel(0, 0));
+    assert!(!td.get_pixel(0, 2));
+    assert!(!td.get_pixel(2, 0));
+    assert!(td.get_pixel(2, 2));
+    assert!(td.get_pixel(0, 4));
+    assert!(!td.get_pixel(2, 4));
 }

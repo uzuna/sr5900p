@@ -1,6 +1,3 @@
-#![feature(new_uninit)]
-#![feature(slice_take)]
-#![feature(exclusive_range_pattern)]
 pub mod analyzer;
 pub mod display;
 pub mod print;

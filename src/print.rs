@@ -107,7 +107,7 @@ fn gen_tcp_data(td: &TapeDisplay) -> Result<Vec<u8>> {
     tcp_data.append(&mut vec![27, 123, 4, 72, 5, 77, 125]);
     tcp_data.append(&mut vec![27, 123, 4, 115, 0, 115, 125]);
 
-    let row_bytes = (td.height + 7) / 8;
+    let row_bytes = td.height.div_ceil(8);
     for y in 0..td.width {
         tcp_data.append(&mut vec![0x1b, 0x2e, 0, 0, 0, 1]);
         tcp_data.append(&mut (td.height as u16).to_le_bytes().to_vec());

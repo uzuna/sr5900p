@@ -21,7 +21,7 @@ pub fn analyze_tcp_data(data: &[u8]) -> Result<()> {
                             &data[i..i + 16]
                         ));
                     }
-                    payload_data.take_last();
+                    payload_data = &payload_data[..payload_data.len() - 1];
 
                     if payload_data
                         .iter()
@@ -36,7 +36,7 @@ pub fn analyze_tcp_data(data: &[u8]) -> Result<()> {
                         ));
                     }
                     // so the last byte of the payload_data is the checksum
-                    payload_data.take_last();
+                    payload_data = &payload_data[..payload_data.len() - 1];
                     if payload_data[0] == 76 {
                         let mut tape_len_bytes = [0u8; 4];
                         tape_len_bytes.copy_from_slice(&payload_data[1..5]);
@@ -51,7 +51,7 @@ pub fn analyze_tcp_data(data: &[u8]) -> Result<()> {
                         return Err(anyhow!("Unexpected label data: {:?}...", &data[i..i + 16]));
                     }
                     let bits = data[i + 6] as usize + data[i + 7] as usize * 256;
-                    let bytes = (bits + 7) / 8;
+                    let bytes = bits.div_ceil(8);
                     print!("cmd 0x1b 0x2e, bits = {bits}, bytes = {bytes}: ",);
                     let img_data = &data[i + 8..i + 8 + bytes];
                     for byte in img_data {

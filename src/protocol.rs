@@ -37,7 +37,7 @@ unsafe impl Sliceable for StatusRequest {}
 unsafe impl Sliceable for StartPrintRequest {}
 unsafe impl Sliceable for StopPrintRequest {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone, Debug)]
 pub struct PacketHeader {
     _signature: [u8; 4],  // "TPRT" for requests, "tprt" for responses
@@ -64,7 +64,7 @@ impl PacketHeader {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct StatusRequest {
     _header: PacketHeader,
@@ -101,7 +101,7 @@ impl StatusRequest {
         ))?;
         Ok(match (data[0x01], data[0x0d]) {
             (2, 0) => PrinterStatus::Printing,
-            (0, 0 | 1 | 2) => match data[0x02] {
+            (0, 0..=2) => match data[0x02] {
                 0x06 => PrinterStatus::NoTape,
                 0x21 => PrinterStatus::CoverIsOpened,
                 0x00 => PrinterStatus::SomeTape(match data[0x03] {
@@ -124,7 +124,7 @@ impl StatusRequest {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct StartPrintRequest {
     _header: PacketHeader,
@@ -156,7 +156,7 @@ impl StartPrintRequest {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct StopPrintRequest {
     _header: PacketHeader,
