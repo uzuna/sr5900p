@@ -62,6 +62,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -113,6 +119,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "datamatrix"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2d3882a013aca40e2e24f0e454ef7a581a50c603d67eded130013ab641a289d"
+dependencies = [
+ "arrayvec",
+ "flagset",
+]
+
+[[package]]
 name = "embedded-graphics"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -149,6 +165,12 @@ checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
 ]
+
+[[package]]
+name = "flagset"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "flate2"
@@ -351,6 +373,7 @@ dependencies = [
  "ab_glyph",
  "anyhow",
  "argh",
+ "datamatrix",
  "embedded-graphics",
  "image",
  "png",

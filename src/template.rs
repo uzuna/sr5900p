@@ -22,6 +22,7 @@
 //! data = "{shelf_id}"
 //! ```
 //!
+//! Column types: `text`, `qr`, `datamatrix` (`shape = "square"` or `"rectangle"`) and `image`.
 //! `{name}` in `text` / `data` is replaced with the field of the same name.
 //! `size` is a fraction of the printable height.
 //! When the rendered label is longer than `max_length_mm`, rendering fails
@@ -37,6 +38,8 @@ use ab_glyph::ScaleFont;
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use datamatrix::DataMatrix;
+use datamatrix::SymbolList;
 use image::Luma;
 use qrcode::QrCode;
 use serde::Deserialize;
@@ -91,6 +94,22 @@ pub enum Column {
         #[serde(default = "default_size")]
         size: f32,
     },
+    Datamatrix {
+        data: String,
+        #[serde(default = "default_size")]
+        size: f32,
+        #[serde(default)]
+        shape: DatamatrixShape,
+    },
+}
+
+#[derive(Deserialize, Debug, Default, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum DatamatrixShape {
+    #[default]
+    Square,
+    /// wider than high; fits narrow tapes with less height
+    Rectangle,
 }
 
 #[derive(Deserialize, Debug)]
@@ -146,6 +165,10 @@ impl Template {
                 Column::Image { path, size } => {
                     let img = render_image(&self.resolve(path), frac_px(h, *size))?;
                     center_vertical(&img, h)
+                }
+                Column::Datamatrix { data, size, shape } => {
+                    let dm = render_datamatrix(&expand(data, fields)?, frac_px(h, *size), *shape)?;
+                    center_vertical(&dm, h)
                 }
             });
         }
@@ -278,6 +301,33 @@ fn render_qr(text: &str, size_px: usize) -> Result<TapeDisplay> {
     let ofs_y = (size_px - image.height()) / 2;
     for (x, y, p) in image.enumerate_pixels() {
         td.set_pixel((x + ofs_x) as usize, (y + ofs_y) as usize, p.0[0] == 0);
+    }
+    Ok(td)
+}
+
+/// Render a Data Matrix whose height is at most height_px, with whole-pixel modules.
+fn render_datamatrix(text: &str, height_px: usize, shape: DatamatrixShape) -> Result<TapeDisplay> {
+    let symbols = match shape {
+        DatamatrixShape::Square => SymbolList::default().enforce_square(),
+        DatamatrixShape::Rectangle => SymbolList::default().enforce_rectangular(),
+    };
+    let bitmap = DataMatrix::encode_str(text, symbols)
+        .map_err(|e| anyhow!("Failed to generate a Data Matrix: {e:?}"))?
+        .bitmap();
+    let module = height_px / bitmap.height();
+    if module == 0 {
+        return Err(anyhow!(
+            "Data Matrix needs {} px but only {height_px} px is available",
+            bitmap.height()
+        ));
+    }
+    let mut td = TapeDisplay::new(bitmap.width() * module, bitmap.height() * module);
+    for (x, y) in bitmap.pixels() {
+        for dy in 0..module {
+            for dx in 0..module {
+                td.set_pixel(x * module + dx, y * module + dy, true);
+            }
+        }
     }
     Ok(td)
 }
@@ -426,6 +476,35 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
     #[test]
     fn parse_rejects_unknown_column_type() {
         assert!(Template::from_toml_str("[[columns]]\ntype = \"barcode\"\n", ".").is_err());
+    }
+
+    #[test]
+    fn render_datamatrix_uses_whole_pixel_modules_within_height() {
+        let h = Tape::W12.width_px() as usize;
+        let sq = render_datamatrix("SH-A03", h, DatamatrixShape::Square).unwrap();
+        assert_eq!(sq.width, sq.height);
+        assert!(sq.height <= h);
+        // the largest whole-pixel module that fits the symbol into h
+        let n = DataMatrix::encode_str("SH-A03", SymbolList::default().enforce_square())
+            .unwrap()
+            .bitmap()
+            .height();
+        assert_eq!(sq.height, h / n * n);
+        // the L-shaped finder: left column and bottom row are all dark
+        assert!((0..sq.height).all(|y| sq.get_pixel(0, y)));
+        assert!((0..sq.width).all(|x| sq.get_pixel(x, sq.height - 1)));
+
+        let rect = render_datamatrix("SH-A03", h, DatamatrixShape::Rectangle).unwrap();
+        assert!(rect.width > rect.height);
+        assert!(rect.height <= h);
+    }
+
+    #[test]
+    fn render_datamatrix_rejects_too_small_height() {
+        let err = render_datamatrix("SH-A03", 5, DatamatrixShape::Square)
+            .err()
+            .expect("should be rejected");
+        assert!(err.to_string().contains("only 5 px"), "{err}");
     }
 
     #[test]
