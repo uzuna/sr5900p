@@ -23,6 +23,7 @@
 //! ```
 //!
 //! Column types: `text`, `qr`, `datamatrix` (`shape = "square"` or `"rectangle"`) and `image`.
+//! `code128` draws a 1D barcode; `module_mm` sets the narrowest bar (default 0.3 mm).
 //! `{name}` in `text` / `data` is replaced with the field of the same name.
 //! `size` is a fraction of the printable height.
 //! When the rendered label is longer than `max_length_mm`, rendering fails
@@ -38,6 +39,7 @@ use ab_glyph::ScaleFont;
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use barcoders::sym::code128::Code128;
 use datamatrix::DataMatrix;
 use datamatrix::SymbolList;
 use image::Luma;
@@ -101,6 +103,18 @@ pub enum Column {
         #[serde(default)]
         shape: DatamatrixShape,
     },
+    Code128 {
+        data: String,
+        #[serde(default = "default_size")]
+        size: f32,
+        /// width of the narrowest bar
+        #[serde(default = "default_module_mm")]
+        module_mm: f32,
+    },
+}
+
+fn default_module_mm() -> f32 {
+    0.3
 }
 
 #[derive(Deserialize, Debug, Default, Clone, Copy)]
@@ -165,6 +179,15 @@ impl Template {
                 Column::Image { path, size } => {
                     let img = render_image(&self.resolve(path), frac_px(h, *size))?;
                     center_vertical(&img, h)
+                }
+                Column::Code128 {
+                    data,
+                    size,
+                    module_mm,
+                } => {
+                    let module = crate::print::mm_to_px(*module_mm).max(1) as usize;
+                    let bc = render_code128(&expand(data, fields)?, frac_px(h, *size), module)?;
+                    center_vertical(&bc, h)
                 }
                 Column::Datamatrix { data, size, shape } => {
                     let dm = render_datamatrix(&expand(data, fields)?, frac_px(h, *size), *shape)?;
@@ -301,6 +324,25 @@ fn render_qr(text: &str, size_px: usize) -> Result<TapeDisplay> {
     let ofs_y = (size_px - image.height()) / 2;
     for (x, y, p) in image.enumerate_pixels() {
         td.set_pixel((x + ofs_x) as usize, (y + ofs_y) as usize, p.0[0] == 0);
+    }
+    Ok(td)
+}
+
+/// Render a Code128 barcode (character set B) with 10-module quiet zones on both sides.
+fn render_code128(text: &str, height_px: usize, module_px: usize) -> Result<TapeDisplay> {
+    const QUIET_ZONE: usize = 10;
+    let bars = Code128::new(format!("\u{0181}{text}"))
+        .map_err(|e| anyhow!("Failed to generate a Code128 barcode for {text:?}: {e}"))?
+        .encode();
+    let mut td = TapeDisplay::new((bars.len() + 2 * QUIET_ZONE) * module_px, height_px);
+    for (i, bar) in bars.iter().enumerate() {
+        if *bar == 1 {
+            for dx in 0..module_px {
+                for y in 0..height_px {
+                    td.set_pixel((QUIET_ZONE + i) * module_px + dx, y, true);
+                }
+            }
+        }
     }
     Ok(td)
 }
@@ -505,6 +547,32 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
             .err()
             .expect("should be rejected");
         assert!(err.to_string().contains("only 5 px"), "{err}");
+    }
+
+    #[test]
+    fn render_code128_has_quiet_zones_and_full_height_bars() {
+        let module = 4;
+        let bars = Code128::new("\u{0181}SH-A03").unwrap().encode();
+        let td = render_code128("SH-A03", 100, module).unwrap();
+        assert_eq!(td.width, (bars.len() + 20) * module);
+        assert_eq!(td.height, 100);
+        // 10-module quiet zones on both sides are blank
+        for y in 0..td.height {
+            for x in 0..10 * module {
+                assert!(!td.get_pixel(x, y));
+                assert!(!td.get_pixel(td.width - 1 - x, y));
+            }
+        }
+        // each module column matches the encoded bar over the whole height
+        for (i, bar) in bars.iter().enumerate() {
+            let x = (10 + i) * module;
+            assert!((0..td.height).all(|y| td.get_pixel(x, y) == (*bar == 1)));
+        }
+    }
+
+    #[test]
+    fn render_code128_rejects_non_ascii() {
+        assert!(render_code128("棚", 100, 4).is_err());
     }
 
     #[test]
