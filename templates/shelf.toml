@@ -1,0 +1,15 @@
+# 棚: 管理部門 / 棚ID + 棚IDのQR
+[fonts]
+bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
+medium = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc" }
+
+[[columns]]
+type = "text"
+lines = [
+  { text = "{dept}", font = "medium", size = 0.38 },
+  { text = "{shelf_id}", font = "bold", size = 0.6 },
+]
+
+[[columns]]
+type = "qr"
+data = "{shelf_id}"

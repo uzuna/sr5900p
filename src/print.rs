@@ -5,6 +5,7 @@ use crate::protocol::StartPrintRequest;
 use crate::protocol::StatusRequest;
 use crate::protocol::StopPrintRequest;
 use crate::PrinterStatus;
+use crate::template::Template;
 use crate::Tape;
 use anyhow::anyhow;
 use anyhow::Context;
@@ -29,6 +30,7 @@ use image::Luma;
 use qrcode::QrCode;
 //use regex::Regex;
 //use std::fs;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::Write;
 use std::io::BufWriter;
@@ -52,8 +54,7 @@ fn print_tcp_data(device_ip: &str, data: &[u8]) -> Result<()> {
     if let PrinterStatus::SomeTape(t) = info {
         println!("Tape is {:?}, start printing...", t);
     } else {
-        println!("Unexpected state. Aborting...");
-        std::process::exit(1);
+        return Err(anyhow!("Unexpected state. Aborting... status: {:?}", info));
     }
     StartPrintRequest::send(&socket, device_ip)?;
     thread::sleep(time::Duration::from_millis(500));
@@ -359,16 +360,29 @@ fn print_qr_text(text: &str, device_ip: &str, dry_run: bool) -> Result<()> {
 }
 */
 
+/// Query the printer for the loaded tape.
+pub fn detect_tape(device_ip: &str) -> Result<Tape> {
+    let socket = UdpSocket::bind("0.0.0.0:0").context("failed to bind")?;
+    let info = StatusRequest::send(&socket, device_ip)?;
+    if let PrinterStatus::SomeTape(t) = info {
+        Ok(t)
+    } else {
+        Err(anyhow!("Failed to detect tape width. status: {:?}", info))
+    }
+}
+
 fn determine_tape_width_px(args: &PrintArgs) -> Result<i32> {
+    Ok(determine_tape(args)?.width_px())
+}
+
+fn determine_tape(args: &PrintArgs) -> Result<Tape> {
     let detected = if let Some(printer) = &args.printer {
-        let socket = UdpSocket::bind("0.0.0.0:0").context("failed to bind")?;
-        let info = StatusRequest::send(&socket, printer)?;
-        eprintln!("Tape detected: {:?}", info);
-        if let PrinterStatus::SomeTape(t) = info {
-            Some(t)
-        } else {
-            eprintln!("Failed to detect tape width. status: {:?}", info);
-            None
+        match detect_tape(printer) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("{e}");
+                None
+            }
         }
     } else {
         None
@@ -387,8 +401,7 @@ fn determine_tape_width_px(args: &PrintArgs) -> Result<i32> {
             given
         }
         (None, None) => return Err(anyhow!("Please specify --width or --printer")),
-    }
-    .width_px())
+    })
 }
 
 fn print_qr_text(args: &PrintArgs) -> Result<()> {
@@ -488,10 +501,24 @@ fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
     print_td(args, &td)
 }
 
-fn print_td(args: &PrintArgs, td: &TapeDisplay) -> Result<()> {
-    // Generate preview image
-    let path = Path::new(r"preview.png");
-    let file = File::create(path).unwrap();
+fn print_template(args: &PrintArgs) -> Result<()> {
+    let path = args.template.as_ref().context("Please specify --template")?;
+    let template = Template::load(path)?;
+    let mut fields = HashMap::new();
+    for f in &args.field {
+        let (k, v) = f
+            .split_once('=')
+            .ok_or_else(|| anyhow!("--field must be key=value: {f:?}"))?;
+        fields.insert(k.to_string(), v.to_string());
+    }
+    let tape = determine_tape(args)?;
+    let td = template.render(&fields, tape)?;
+    print_td(args, &td)
+}
+
+/// Write the label as a PNG image.
+pub fn save_preview(path: impl AsRef<Path>, td: &TapeDisplay) -> Result<()> {
+    let file = File::create(path)?;
     let w = BufWriter::new(file);
     let mut encoder = png::Encoder::new(w, td.width as u32, td.height as u32); // Width is 2 pixels and height is 1.
     encoder.set_color(png::ColorType::Rgba);
@@ -506,7 +533,7 @@ fn print_td(args: &PrintArgs, td: &TapeDisplay) -> Result<()> {
         (0.15000, 0.06000),
     );
     encoder.set_source_chromaticities(source_chromaticities);
-    let mut writer = encoder.write_header().unwrap();
+    let mut writer = encoder.write_header()?;
     let data: Vec<u8> = td
         .framebuffer
         .iter()
@@ -520,7 +547,17 @@ fn print_td(args: &PrintArgs, td: &TapeDisplay) -> Result<()> {
             }
         })
         .collect();
-    writer.write_image_data(&data).unwrap();
+    writer.write_image_data(&data)?;
+    Ok(())
+}
+
+/// Send the label to the printer and wait until printing finishes.
+pub fn print_display(device_ip: &str, td: &TapeDisplay) -> Result<()> {
+    print_tcp_data(device_ip, &gen_tcp_data(td)?)
+}
+
+fn print_td(args: &PrintArgs, td: &TapeDisplay) -> Result<()> {
+    save_preview("preview.png", td)?;
 
     let tcp_data = gen_tcp_data(td)?;
 
@@ -663,6 +700,12 @@ pub struct PrintArgs {
     /// an IPv4 address for the printer
     #[argh(option)]
     printer: Option<String>,
+    /// label template file (TOML)
+    #[argh(option)]
+    template: Option<String>,
+    /// template field as key=value (repeatable)
+    #[argh(option)]
+    field: Vec<String>,
 }
 pub fn do_print(args: &PrintArgs) -> Result<()> {
     if args.test_pattern {
@@ -671,6 +714,8 @@ pub fn do_print(args: &PrintArgs) -> Result<()> {
         print_qr_text(args)
     } else if args.qr_text_small.is_some() {
         print_qr_text_small(args)
+    } else if args.template.is_some() {
+        print_template(args)
     } else {
         Err(anyhow!("Please specify a print command"))
     }

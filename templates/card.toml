@@ -1,0 +1,20 @@
+# 機材貸出用 社員IDカード: 用途ロゴ / 管理番号 + トークンのQR
+# token はサーバーで生成し、email と結びつける
+[fonts]
+bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
+medium = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc" }
+
+[[columns]]
+type = "image"
+path = "logo_lending.png"
+
+[[columns]]
+type = "text"
+lines = [
+  { text = "機材貸出カード", font = "medium", size = 0.35 },
+  { text = "{card_id}", font = "bold", size = 0.6 },
+]
+
+[[columns]]
+type = "qr"
+data = "{token}"

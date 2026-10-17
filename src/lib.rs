@@ -5,6 +5,7 @@ pub mod analyzer;
 pub mod display;
 pub mod print;
 pub mod protocol;
+pub mod template;
 
 use crate::print::mm_to_px;
 use crate::protocol::PacketHeader;
@@ -34,7 +35,7 @@ impl Tape {
             _ => return Err(anyhow!("Tape for {mm} mm is not defined")),
         })
     }
-    fn width_px(&self) -> i32 {
+    pub fn width_px(&self) -> i32 {
         let w = match self {
             Tape::W4 => 2.85,  // verified
             Tape::W6 => 5.0,   // verified
