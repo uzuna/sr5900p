@@ -378,7 +378,10 @@ fn determine_tape_width_px(args: &PrintArgs) -> Result<i32> {
 fn determine_tape(args: &PrintArgs) -> Result<Tape> {
     let detected = if let Some(printer) = &args.printer {
         match detect_tape(printer) {
-            Ok(t) => Some(t),
+            Ok(t) => {
+                eprintln!("Tape detected: {:?}", t);
+                Some(t)
+            }
             Err(e) => {
                 eprintln!("{e}");
                 None
