@@ -4,8 +4,8 @@ use crate::protocol::notify_data_stream;
 use crate::protocol::StartPrintRequest;
 use crate::protocol::StatusRequest;
 use crate::protocol::StopPrintRequest;
-use crate::PrinterStatus;
 use crate::template::Template;
+use crate::PrinterStatus;
 use crate::Tape;
 use anyhow::anyhow;
 use anyhow::Context;
@@ -453,7 +453,10 @@ fn print_qr_text(args: &PrintArgs) -> Result<()> {
 }
 
 fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
-    let text = args.qr_text_small.as_ref().expect("Please specify --qr-text-small");
+    let text = args
+        .qr_text_small
+        .as_ref()
+        .expect("Please specify --qr-text-small");
     let tape_width_px = determine_tape_width_px(args)? as usize;
     let qr_td = {
         let mut td = TapeDisplay::new(tape_width_px, tape_width_px);
@@ -484,7 +487,7 @@ fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
         let margin_px = 4usize;
         let text_width = 10 * text_len + margin_px;
         let r = std::cmp::min(tape_width_px / text_width, 8);
-        let mut td = TapeDisplay::new(text_width, 20+margin_px);
+        let mut td = TapeDisplay::new(text_width, 20 + margin_px);
         let tb = TextStyleBuilder::new();
         let ts = tb
             .alignment(Alignment::Center)
@@ -497,12 +500,19 @@ fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
     };
     let mut td = TapeDisplay::new(qr_td.width * 9 / 10 + text_td.width, tape_width_px);
     td.overlay_or(&qr_td, 0, (td.height - qr_td.height) / 2);
-    td.overlay_or(&text_td, qr_td.width * 9 / 10, (td.height - text_td.height)/2);
+    td.overlay_or(
+        &text_td,
+        qr_td.width * 9 / 10,
+        (td.height - text_td.height) / 2,
+    );
     print_td(args, &td)
 }
 
 fn print_template(args: &PrintArgs) -> Result<()> {
-    let path = args.template.as_ref().context("Please specify --template")?;
+    let path = args
+        .template
+        .as_ref()
+        .context("Please specify --template")?;
     let template = Template::load(path)?;
     let mut fields = HashMap::new();
     for f in &args.field {

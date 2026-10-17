@@ -12,7 +12,10 @@ fn main() -> Result<()> {
     let template = Template::load(args.next().context("template path")?)?;
     let tape = Tape::from_mm(args.next().context("tape mm")?.parse()?)?;
     let fields: HashMap<String, String> = args
-        .filter_map(|a| a.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|a| {
+            a.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect();
     let td = template.render(&fields, tape)?;
     save_preview("example.png", &td)?;

@@ -114,7 +114,10 @@ impl Template {
         let h = tape.width_px() as usize;
         let mut fonts = HashMap::new();
         for (name, spec) in &self.fonts {
-            fonts.insert(name.as_str(), load_font(&self.resolve(&spec.path), spec.index)?);
+            fonts.insert(
+                name.as_str(),
+                load_font(&self.resolve(&spec.path), spec.index)?,
+            );
         }
         let mut parts = Vec::new();
         for c in &self.columns {
@@ -122,9 +125,9 @@ impl Template {
                 Column::Text { lines } => {
                     let mut rendered = Vec::new();
                     for l in lines {
-                        let font = fonts
-                            .get(l.font.as_str())
-                            .ok_or_else(|| anyhow!("Font '{}' is not defined in [fonts]", l.font))?;
+                        let font = fonts.get(l.font.as_str()).ok_or_else(|| {
+                            anyhow!("Font '{}' is not defined in [fonts]", l.font)
+                        })?;
                         let text = expand(&l.text, fields)?;
                         rendered.push(render_text(font, &text, frac_px(h, l.size)));
                     }
@@ -141,7 +144,8 @@ impl Template {
             });
         }
         let gap = crate::print::mm_to_px(self.gap_mm) as usize;
-        let width = parts.iter().map(|p| p.width).sum::<usize>() + gap * parts.len().saturating_sub(1);
+        let width =
+            parts.iter().map(|p| p.width).sum::<usize>() + gap * parts.len().saturating_sub(1);
         let mut td = TapeDisplay::new(width, h);
         let mut x = 0;
         for p in &parts {
@@ -204,7 +208,8 @@ fn center_vertical(part: &TapeDisplay, h: usize) -> TapeDisplay {
 }
 
 fn load_font(path: &Path, index: u32) -> Result<FontVec> {
-    let data = std::fs::read(path).with_context(|| format!("Failed to read font {}", path.display()))?;
+    let data =
+        std::fs::read(path).with_context(|| format!("Failed to read font {}", path.display()))?;
     FontVec::try_from_vec_and_index(data, index)
         .map_err(|e| anyhow!("Failed to load font {}: {e}", path.display()))
 }
@@ -265,7 +270,8 @@ fn render_image(path: &Path, height_px: usize) -> Result<TapeDisplay> {
     let img = image::open(path)
         .with_context(|| format!("Failed to open image {}", path.display()))?
         .to_rgba8();
-    let width_px = (img.width() as usize * height_px + img.height() as usize / 2) / img.height() as usize;
+    let width_px =
+        (img.width() as usize * height_px + img.height() as usize / 2) / img.height() as usize;
     let img = image::imageops::resize(
         &img,
         width_px as u32,
