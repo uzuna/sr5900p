@@ -1,4 +1,7 @@
 # 機材ラベル: 資産名 / 管理番号 / 管理部門 + 管理番号QR
+# 印刷する画像の長さの上限。超える文字は印刷せずにエラーにする
+max_length_mm = 60
+
 [fonts]
 bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
 regular = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc" }

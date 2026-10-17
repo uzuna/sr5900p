@@ -5,6 +5,7 @@
 //!
 //! ```toml
 //! gap_mm = 1.5
+//! max_length_mm = 40
 //!
 //! [fonts]
 //! bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
@@ -23,6 +24,8 @@
 //!
 //! `{name}` in `text` / `data` is replaced with the field of the same name.
 //! `size` is a fraction of the printable height.
+//! When the rendered label is longer than `max_length_mm`, rendering fails
+//! instead of printing a label that does not fit.
 use crate::display::TapeDisplay;
 use crate::Tape;
 use ab_glyph::point;
@@ -45,6 +48,9 @@ use std::path::PathBuf;
 pub struct Template {
     #[serde(default = "default_gap_mm")]
     pub gap_mm: f32,
+    /// upper limit of the label length (the printer's own margins are not included)
+    #[serde(default)]
+    pub max_length_mm: Option<f32>,
     #[serde(default)]
     pub fonts: HashMap<String, FontSpec>,
     pub columns: Vec<Column>,
@@ -146,6 +152,14 @@ impl Template {
         let gap = crate::print::mm_to_px(self.gap_mm) as usize;
         let width =
             parts.iter().map(|p| p.width).sum::<usize>() + gap * parts.len().saturating_sub(1);
+        if let Some(max_mm) = self.max_length_mm {
+            if width > crate::print::mm_to_px(max_mm) as usize {
+                return Err(anyhow!(
+                    "Label is {:.1} mm long, which exceeds max_length_mm = {max_mm}",
+                    px_to_mm(width)
+                ));
+            }
+        }
         let mut td = TapeDisplay::new(width, h);
         let mut x = 0;
         for p in &parts {
@@ -163,6 +177,10 @@ impl Template {
             self.base_dir.join(p)
         }
     }
+}
+
+fn px_to_mm(px: usize) -> f32 {
+    px as f32 * 25.4 / 360.0
 }
 
 fn frac_px(h: usize, frac: f32) -> usize {
@@ -285,4 +303,151 @@ fn render_image(path: &Path, height_px: usize) -> Result<TapeDisplay> {
         td.set_pixel(x as usize, y as usize, a >= 128 && luma < 128);
     }
     Ok(td)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BOLD: &str = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc";
+
+    fn fields(kv: &[(&str, &str)]) -> HashMap<String, String> {
+        kv.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn template(body: &str) -> Template {
+        // [fonts] goes last so that top-level keys in body stay top-level
+        let s = format!("{body}\n[fonts]\nbold = {{ path = \"{BOLD}\" }}\n");
+        Template::from_toml_str(&s, ".").unwrap()
+    }
+
+    #[test]
+    fn expand_replaces_fields() {
+        let f = fields(&[("a", "1"), ("b", "xy")]);
+        assert_eq!(expand("{a}-{b}!", &f).unwrap(), "1-xy!");
+        assert_eq!(expand("plain", &f).unwrap(), "plain");
+    }
+
+    #[test]
+    fn expand_rejects_missing_field_and_unclosed_brace() {
+        let f = fields(&[("a", "1")]);
+        assert!(expand("{a}{b}", &f)
+            .unwrap_err()
+            .to_string()
+            .contains("'b'"));
+        assert!(expand("{a", &f).is_err());
+    }
+
+    #[test]
+    fn render_fills_tape_height_and_lays_out_columns_with_gap() {
+        let t = template(
+            r#"
+gap_mm = 2.0
+[[columns]]
+type = "text"
+lines = [{ text = "{id}", font = "bold", size = 0.5 }]
+[[columns]]
+type = "qr"
+data = "{id}"
+"#,
+        );
+        let f = fields(&[("id", "SH-A03")]);
+        let td = t.render(&f, Tape::W12).unwrap();
+        let h = Tape::W12.width_px() as usize;
+        assert_eq!(td.height, h);
+
+        let text_only = template(
+            r#"
+[[columns]]
+type = "text"
+lines = [{ text = "{id}", font = "bold", size = 0.5 }]
+"#,
+        )
+        .render(&f, Tape::W12)
+        .unwrap();
+        // text + gap + QR (a square of the full height)
+        let gap = crate::print::mm_to_px(2.0) as usize;
+        assert_eq!(td.width, text_only.width + gap + h);
+        // the gap is blank and the QR column is placed right after it
+        let qr = render_qr("SH-A03", h).unwrap();
+        for y in 0..h {
+            for x in 0..gap {
+                assert!(!td.get_pixel(text_only.width + x, y), "gap at ({x}, {y})");
+            }
+            for x in 0..h {
+                let got = td.get_pixel(text_only.width + gap + x, y);
+                assert_eq!(got, qr.get_pixel(x, y), "QR at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn render_rejects_label_longer_than_max_length() {
+        let body = r#"
+[[columns]]
+type = "text"
+lines = [{ text = "{name}", font = "bold", size = 1.0 }]
+"#;
+        let f = fields(&[("name", "ABCDEFGHIJ")]);
+        let len = template(body).render(&f, Tape::W12).unwrap().width;
+        let len_mm = px_to_mm(len);
+
+        let fits = template(&format!("max_length_mm = {}\n{body}", len_mm + 1.0));
+        assert_eq!(fits.render(&f, Tape::W12).unwrap().width, len);
+
+        let too_short = template(&format!("max_length_mm = {}\n{body}", len_mm - 1.0));
+        let err = too_short
+            .render(&f, Tape::W12)
+            .err()
+            .expect("should be rejected")
+            .to_string();
+        assert!(err.contains("exceeds max_length_mm"), "{err}");
+    }
+
+    #[test]
+    fn render_rejects_undefined_font() {
+        let t = template(
+            r#"
+[[columns]]
+type = "text"
+lines = [{ text = "x", font = "nope", size = 0.5 }]
+"#,
+        );
+        let err = t
+            .render(&fields(&[]), Tape::W12)
+            .err()
+            .expect("should be rejected")
+            .to_string();
+        assert!(err.contains("'nope'"), "{err}");
+    }
+
+    #[test]
+    fn parse_rejects_unknown_column_type() {
+        assert!(Template::from_toml_str("[[columns]]\ntype = \"barcode\"\n", ".").is_err());
+    }
+
+    #[test]
+    fn render_image_binarizes_and_keeps_aspect() {
+        // 4x2 image: left half black, right half white; transparent black stays blank
+        let dir = std::env::temp_dir().join(format!("sr5900p-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("img.png");
+        let mut img = image::RgbaImage::new(4, 2);
+        for (x, _, p) in img.enumerate_pixels_mut() {
+            *p = match x {
+                0 => image::Rgba([0, 0, 0, 255]),
+                1 => image::Rgba([0, 0, 0, 0]),
+                _ => image::Rgba([255, 255, 255, 255]),
+            };
+        }
+        img.save(&path).unwrap();
+        let td = render_image(&path, 2).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!((td.width, td.height), (4, 2));
+        assert!(td.get_pixel(0, 0));
+        assert!(!td.get_pixel(1, 0));
+        assert!(!td.get_pixel(2, 0));
+    }
 }

@@ -1,5 +1,8 @@
 # 機材貸出用 社員IDカード: 用途ロゴ / 管理番号 + トークンのQR
 # token はサーバーで生成し、email と結びつける
+# 印刷する画像の長さの上限。超える文字は印刷せずにエラーにする
+max_length_mm = 50
+
 [fonts]
 bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
 medium = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc" }

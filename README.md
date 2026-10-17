@@ -33,6 +33,7 @@ sr5900p print --printer ${PRINTER_IP} --qr-text 'Hello, world!'
 
 A template (TOML) lays out text / QR code / image columns from left to right.
 Text is rendered with TTF/OTF fonts, so Japanese text and multiple fonts and sizes are supported.
+A label longer than the template's `max_length_mm` is rejected instead of printed.
 See `src/template.rs` for the format and `templates/` for examples.
 
 ```
