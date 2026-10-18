@@ -33,11 +33,14 @@
 use crate::label::display::TapeDisplay;
 use crate::label::error::CodeKind;
 use crate::label::error::LabelError;
-use crate::label::logo::render_raster;
+use crate::label::logo::load_picture;
+use crate::label::logo::render_picture;
 use crate::label::logo::render_stamp;
 use crate::label::logo::Binarize;
 use crate::label::logo::DefaultLogo;
 use crate::label::logo::Logo;
+use crate::label::logo::LogoKind;
+use crate::label::logo::Picture;
 use crate::label::logo::StampStyle;
 use crate::label::px_to_mm;
 use crate::label::Label;
@@ -54,13 +57,11 @@ use barcoders::sym::code128::Code128;
 use datamatrix::DataMatrix;
 use datamatrix::SymbolList;
 use image::Luma;
-use image::RgbaImage;
 use qrcode::QrCode;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 #[derive(Deserialize, Debug)]
 pub struct Template {
@@ -223,7 +224,7 @@ impl Template {
                 }
                 Column::Image { path, size } => {
                     let img = &loaded.images[&self.resolve(path)];
-                    let td = render_raster(img, frac_px(h, *size), Binarize::default(), false)?;
+                    let td = render_picture(img, frac_px(h, *size), Binarize::default(), false)?;
                     center_vertical(&td, h)
                 }
                 Column::Logo {
@@ -236,9 +237,11 @@ impl Template {
                 } => {
                     let logo = self.choose_logo(loaded, data, slot.as_deref(), default.as_ref())?;
                     let px = frac_px(h, *size);
-                    let td = match &logo {
-                        Logo::Image(img) => render_raster(img, px, *binarize, *invert)?,
-                        Logo::Stamp(text) => {
+                    let td = match logo.kind() {
+                        LogoKind::Picture(picture) => {
+                            render_picture(&picture, px, *binarize, *invert)?
+                        }
+                        LogoKind::Stamp(text) => {
                             let style = stamp.as_ref().ok_or_else(|| {
                                 LabelError::InvalidTemplate(
                                     "a text logo needs `stamp` on its logo column".to_string(),
@@ -304,7 +307,7 @@ impl Template {
             None => match default {
                 Some(DefaultLogo::Text { text }) => Ok(Logo::Stamp(expand(text, &data.texts)?)),
                 Some(DefaultLogo::Path { path }) => {
-                    Ok(Logo::Image(loaded.images[&self.resolve(path)].clone()))
+                    Ok(loaded.images[&self.resolve(path)].clone().into())
                 }
                 Some(DefaultLogo::Key { key }) => registered(key),
                 None => Err(LabelError::MissingLogo(
@@ -333,8 +336,8 @@ pub struct Renderer {
 /// Everything a render reads besides the template, loaded before the first render.
 struct Loaded {
     fonts: HashMap<String, FontVec>,
-    /// image files named by the template, by resolved path
-    images: HashMap<PathBuf, Arc<RgbaImage>>,
+    /// image files (raster or SVG) named by the template, by resolved path
+    images: HashMap<PathBuf, Picture>,
     /// logos registered by the application
     logos: HashMap<String, Logo>,
 }
@@ -360,7 +363,7 @@ impl Renderer {
                 }
                 Column::Image { path, .. } => {
                     let path = template.resolve(path);
-                    let img = load_image(&path)?;
+                    let img = load_picture(&path)?;
                     images.insert(path, img);
                 }
                 Column::Logo {
@@ -387,7 +390,7 @@ impl Renderer {
                         }
                         Some(DefaultLogo::Path { path }) => {
                             let path = template.resolve(path);
-                            let img = load_image(&path)?;
+                            let img = load_picture(&path)?;
                             images.insert(path, img);
                         }
                         _ => {}
@@ -626,14 +629,6 @@ fn render_datamatrix(
         }
     }
     Ok(td)
-}
-
-fn load_image(path: &Path) -> Result<Arc<RgbaImage>, LabelError> {
-    let img = image::open(path).map_err(|e| LabelError::Image {
-        path: path.to_path_buf(),
-        reason: e.to_string(),
-    })?;
-    Ok(Arc::new(img.to_rgba8()))
 }
 
 #[cfg(test)]
@@ -942,7 +937,8 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
             };
         }
         img.save(&path).unwrap();
-        let td = render_raster(&load_image(&path).unwrap(), 2, Binarize::default(), false).unwrap();
+        let td =
+            render_picture(&load_picture(&path).unwrap(), 2, Binarize::default(), false).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!((td.width, td.height), (4, 2));
         assert!(td.get_pixel(0, 0));
