@@ -24,7 +24,7 @@ PRINTER_IP=`avahi-browse -alrpt | grep -E '^=.*SR5900P' | cut -d ';' -f 8`
 # OR, you can manually set the IP:
 PRINTER_IP=${YOUR_PRINTER_IP}
 
-# Let's print!
+# Let's print! (RUST_LOG=debug also shows the status read before printing)
 sr5900p print --printer ${PRINTER_IP} --test-pattern
 sr5900p print --printer ${PRINTER_IP} --qr-text 'Hello, world!'
 ```

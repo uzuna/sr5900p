@@ -22,9 +22,9 @@ use std::time;
 pub fn print_tcp_data(device_ip: &str, data: &[u8]) -> Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0").context("failed to bind")?;
     let info = StatusRequest::send(&socket, device_ip)?;
-    println!("{:?}", info);
+    log::debug!("{:?}", info);
     if let PrinterStatus::SomeTape(t) = info {
-        println!("Tape is {:?}, start printing...", t);
+        log::info!("Tape is {:?}, start printing...", t);
     } else {
         return Err(anyhow!("Unexpected state. Aborting... status: {:?}", info));
     }
@@ -36,11 +36,11 @@ pub fn print_tcp_data(device_ip: &str, data: &[u8]) -> Result<()> {
     thread::sleep(time::Duration::from_millis(500));
     stream.write_all(data)?;
 
-    println!("Print data is sent. Waiting...");
+    log::info!("Print data is sent. Waiting...");
     loop {
         thread::sleep(time::Duration::from_millis(500));
         let info = StatusRequest::send(&socket, device_ip)?;
-        println!("{:?}", info);
+        log::info!("{:?}", info);
         if let PrinterStatus::Printing = info {
             continue;
         }
