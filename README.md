@@ -24,7 +24,7 @@ PRINTER_IP=`avahi-browse -alrpt | grep -E '^=.*SR5900P' | cut -d ';' -f 8`
 # OR, you can manually set the IP:
 PRINTER_IP=${YOUR_PRINTER_IP}
 
-# Let's print!
+# Let's print! (RUST_LOG=debug also shows the status read before printing)
 sr5900p print --printer ${PRINTER_IP} --test-pattern
 sr5900p print --printer ${PRINTER_IP} --qr-text 'Hello, world!'
 ```
@@ -34,19 +34,24 @@ sr5900p print --printer ${PRINTER_IP} --qr-text 'Hello, world!'
 A template (TOML) lays out text / QR code / image columns from left to right.
 Text is rendered with TTF/OTF fonts, so Japanese text and multiple fonts and sizes are supported.
 A label longer than the template's `max_length_mm` is rejected instead of printed.
-See `src/template.rs` for the format and `templates/` for examples.
+See `src/label/template.rs` for the format and `templates/` for examples.
 
 ```
 sr5900p print --dry-run --width 12 --template templates/shelf.toml \
   --field dept=開発部 --field shelf_id=SH-A03
 ```
 
-From Rust:
+From Rust (the `cli` feature only builds the command, so library users can turn it off):
+
+```toml
+[dependencies]
+sr5900p = { git = "https://github.com/uzuna/sr5900p", default-features = false }
+```
 
 ```rust
 let td = Template::load("templates/shelf.toml")?.render(&fields, Tape::W12)?;
-sr5900p::print::save_preview("preview.png", &td)?;
-sr5900p::print::print_display(printer_ip, &td)?;
+sr5900p::label::save_preview("preview.png", &td)?;
+sr5900p::printer::print_display(printer_ip, &td)?;
 ```
 
 ## License

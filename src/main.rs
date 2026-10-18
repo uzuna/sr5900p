@@ -1,8 +1,11 @@
+mod analyzer;
+mod cli;
+
+use analyzer::analyze_tcp_data;
 use anyhow::Result;
 use argh::FromArgs;
-use sr5900p::analyzer::analyze_tcp_data;
-use sr5900p::print::do_print;
-use sr5900p::print::PrintArgs;
+use cli::do_print;
+use cli::PrintArgs;
 use std::fs;
 
 #[derive(FromArgs, PartialEq, Debug)]
@@ -32,6 +35,12 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    // the library reports progress through `log`; show info and above as plain lines
+    // so that CLI users still see it (RUST_LOG=debug adds the status read before printing)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp(None)
+        .format_target(false)
+        .init();
     let args: Args = argh::from_env();
     println!("{:?}", args);
     match args.nested {

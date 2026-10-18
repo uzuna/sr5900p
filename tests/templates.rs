@@ -1,10 +1,10 @@
 //! The bundled templates parse, render and fit within their max_length_mm
 //! on 12mm tape with typical values.
-use sr5900p::template::Template;
+use sr5900p::label::template::Template;
 use sr5900p::Tape;
 use std::collections::HashMap;
 
-fn render(name: &str, kv: &[(&str, &str)]) -> anyhow::Result<sr5900p::display::TapeDisplay> {
+fn render(name: &str, kv: &[(&str, &str)]) -> anyhow::Result<sr5900p::label::display::TapeDisplay> {
     let t = Template::load(format!("{}/templates/{name}", env!("CARGO_MANIFEST_DIR")))?;
     let fields: HashMap<String, String> = kv
         .iter()

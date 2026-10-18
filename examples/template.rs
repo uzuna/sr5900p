@@ -2,8 +2,8 @@
 //! cargo run --example template -- <template.toml> <tape mm> key=value...
 use anyhow::Context;
 use anyhow::Result;
-use sr5900p::print::save_preview;
-use sr5900p::template::Template;
+use sr5900p::label::save_preview;
+use sr5900p::label::template::Template;
 use sr5900p::Tape;
 use std::collections::HashMap;
 
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         .collect();
     let td = template.render(&fields, tape)?;
     save_preview("example.png", &td)?;
-    // sr5900p::print::print_display("192.168.11.16", &td)?; // to print
+    // sr5900p::printer::print_display("192.168.11.16", &td)?; // to print
     println!("{} x {} px", td.width, td.height);
     Ok(())
 }

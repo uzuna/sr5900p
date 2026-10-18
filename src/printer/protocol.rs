@@ -84,7 +84,7 @@ impl StatusRequest {
         let (len, _) = socket.recv_from(&mut buf)?;
         let res_header = PacketHeader::copy_from_slice(&buf[0..len])?;
         let data = &buf[size_of::<PacketHeader>()..len];
-        println!("{:?}", data);
+        log::debug!("status: {:?}", data);
         // idle
         // [20, 0,  0, 4, 0, 0, 0, 0, 64, 0, 0,  0, 0, 0,  0, 0,  0, 0, 0, 0]
         // printing
@@ -117,7 +117,7 @@ impl StatusRequest {
                 _ => PrinterStatus::Unknown(res_header, data),
             },
             (v01, v0d) => {
-                eprintln!("v01: {v01}, v0d: {v0d}");
+                log::warn!("Unknown status v01: {v01}, v0d: {v0d}");
                 PrinterStatus::Unknown(res_header, data)
             }
         })
@@ -205,7 +205,7 @@ pub fn notify_data_stream(socket: &UdpSocket, device_ip: &str) -> Result<()> {
     let res_header = PacketHeader::copy_from_slice(&buf[0..len])?;
     let data = &buf[size_of::<PacketHeader>()..len];
     if data == [0x00] {
-        println!("Warning: response for cmd 0x0100 was 0x00 (normally 0x10)");
+        log::warn!("Response for cmd 0x0100 was 0x00 (normally 0x10)");
     } else if data != [0x10] {
         return Err(anyhow!(
             "Invalid response for cmd 0100: {:?}, data: {:?}",
