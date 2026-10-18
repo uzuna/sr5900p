@@ -6,6 +6,7 @@
 //! timeout is not (localhost connects at once). The fake does not model device timing or how
 //! it reacts to the TCP connection closing.
 use sr5900p::label::display::TapeDisplay;
+use sr5900p::label::Label;
 use sr5900p::printer::gen_tcp_data;
 use sr5900p::printer::Printer;
 use sr5900p::printer::PrinterError;
@@ -189,11 +190,12 @@ impl Fake {
     }
 }
 
-fn label(height: usize) -> TapeDisplay {
+fn label(tape: Tape) -> Label {
+    let height = tape.width_px() as usize;
     let mut td = TapeDisplay::new(30, height);
     td.set_pixel(0, 0, true);
     td.set_pixel(29, height - 1, true);
-    td
+    Label::new(td, tape).unwrap()
 }
 
 #[test]
@@ -229,24 +231,24 @@ fn status_times_out_on_a_silent_printer() {
 #[test]
 fn print_sends_the_stream_and_stops() {
     let fake = Fake::start(Behavior::default());
-    let td = label(Tape::W12.width_px() as usize);
+    let td = label(Tape::W12);
     fake.printer().print(&td).unwrap();
     let cmds = fake.commands();
     // status, start, data stream prepare/ready, status polls (2 printing + 1 done), stop
     assert_eq!(cmds, vec![1, 2, 0x0101, 0x0100, 1, 1, 1, 3]);
-    assert_eq!(fake.log.lock().unwrap().stream, gen_tcp_data(&td));
+    assert_eq!(fake.log.lock().unwrap().stream, gen_tcp_data(td.bitmap()));
 }
 
 #[test]
 fn print_rejects_a_label_for_another_tape_before_starting() {
     let fake = Fake::start(Behavior::default());
-    let td = label(Tape::W18.width_px() as usize);
+    let td = label(Tape::W18);
     let err = fake.printer().print(&td).unwrap_err();
     assert!(
         matches!(
             err,
             PrinterError::TapeMismatch {
-                label_px: 216,
+                label: Tape::W18,
                 loaded: Tape::W12
             }
         ),
@@ -261,18 +263,15 @@ fn print_refuses_when_no_tape_is_loaded() {
         idle_state: 0x06,
         ..Default::default()
     });
-    let err = fake
-        .printer()
-        .print(&label(Tape::W12.width_px() as usize))
-        .unwrap_err();
+    let err = fake.printer().print(&label(Tape::W12)).unwrap_err();
     assert!(matches!(err, PrinterError::NoTape), "{err:?}");
     assert_eq!(fake.commands(), vec![1]);
 }
 
 /// Run on another thread so that a missing limit fails the test instead of hanging it.
-fn print_within(printer: Printer, td: TapeDisplay, limit: Duration) -> Result<(), PrinterError> {
+fn print_within(printer: Printer, label: Label, limit: Duration) -> Result<(), PrinterError> {
     let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || tx.send(printer.print(&td)).unwrap());
+    thread::spawn(move || tx.send(printer.print(&label)).unwrap());
     rx.recv_timeout(limit).expect("print() did not return")
 }
 
@@ -283,12 +282,7 @@ fn print_gives_up_after_print_timeout_and_still_stops() {
         ..Default::default()
     });
     let printer = fake.printer().print_timeout(Duration::from_secs(1));
-    let err = print_within(
-        printer,
-        label(Tape::W12.width_px() as usize),
-        Duration::from_secs(6),
-    )
-    .unwrap_err();
+    let err = print_within(printer, label(Tape::W12), Duration::from_secs(6)).unwrap_err();
     assert!(matches!(err, PrinterError::PrintTimeout(_)), "{err:?}");
     assert_eq!(fake.commands().last(), Some(&3));
 }
@@ -300,10 +294,7 @@ fn print_reports_a_status_other_than_idle_after_printing() {
         done_state: 0x42,
         ..Default::default()
     });
-    let err = fake
-        .printer()
-        .print(&label(Tape::W12.width_px() as usize))
-        .unwrap_err();
+    let err = fake.printer().print(&label(Tape::W12)).unwrap_err();
     assert!(
         matches!(err, PrinterError::UnexpectedStatus(Status::Unknown(d)) if d[2] == 0x42),
         "{err:?}"
@@ -317,10 +308,7 @@ fn print_fails_when_stop_is_not_acknowledged() {
         silent_stop: true,
         ..Default::default()
     });
-    let err = fake
-        .printer()
-        .print(&label(Tape::W12.width_px() as usize))
-        .unwrap_err();
+    let err = fake.printer().print(&label(Tape::W12)).unwrap_err();
     assert!(
         matches!(
             err,
@@ -340,10 +328,7 @@ fn print_returns_the_send_error_rather_than_the_stop_error() {
         silent_stop: true,
         ..Default::default()
     });
-    let err = fake
-        .printer()
-        .print(&label(Tape::W12.width_px() as usize))
-        .unwrap_err();
+    let err = fake.printer().print(&label(Tape::W12)).unwrap_err();
     assert!(
         matches!(&err, PrinterError::Protocol(m) if m.starts_with("confirm data stream")),
         "{err:?}"
@@ -358,10 +343,7 @@ fn print_sends_stop_when_the_start_reply_is_lost() {
         silent_start: true,
         ..Default::default()
     });
-    let err = fake
-        .printer()
-        .print(&label(Tape::W12.width_px() as usize))
-        .unwrap_err();
+    let err = fake.printer().print(&label(Tape::W12)).unwrap_err();
     assert!(
         matches!(
             err,
@@ -387,12 +369,7 @@ fn print_timeout_also_bounds_an_unanswered_poll() {
         .timeout(Duration::from_secs(3))
         .print_timeout(Duration::from_millis(800));
     let started = std::time::Instant::now();
-    let err = print_within(
-        printer,
-        label(Tape::W12.width_px() as usize),
-        Duration::from_secs(10),
-    )
-    .unwrap_err();
+    let err = print_within(printer, label(Tape::W12), Duration::from_secs(10)).unwrap_err();
     assert!(matches!(err, PrinterError::PrintTimeout(_)), "{err:?}");
     // 1.5 s of pauses between the steps + 0.8 s of waiting; a full 3 s poll would exceed this
     assert!(

@@ -2,19 +2,20 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), sr5900p::printer::PrinterError> {
-//! # let td = sr5900p::label::display::TapeDisplay::new(10, 144);
+//! # let label: sr5900p::label::Label = unimplemented!();
 //! use sr5900p::printer::Printer;
 //! use std::time::Duration;
 //!
 //! let printer = Printer::new("192.168.11.16".parse().unwrap()).timeout(Duration::from_secs(3));
 //! println!("{:?}", printer.status()?);
-//! printer.print(&td)?;
+//! printer.print(&label)?;
 //! # Ok(())
 //! # }
 //! ```
 pub mod protocol;
 
 use crate::label::display::TapeDisplay;
+use crate::label::Label;
 use crate::Tape;
 use std::io;
 use std::io::prelude::Write;
@@ -57,8 +58,8 @@ pub enum PrinterError {
     CoverOpen,
     #[error("the printer is busy printing")]
     Busy,
-    #[error("the label is {label_px} px high but the loaded {loaded:?} tape takes {} px", loaded.width_px())]
-    TapeMismatch { label_px: usize, loaded: Tape },
+    #[error("the label is for {label:?} tape but {loaded:?} tape is loaded")]
+    TapeMismatch { label: Tape, loaded: Tape },
     #[error("unknown tape index {0:#04x}")]
     UnknownTape(u8),
     #[error("unexpected printer status {0:?}")]
@@ -125,9 +126,9 @@ impl Printer {
         protocol::status(&self.control_socket()?, self.addr)
     }
 
-    /// Print a rendered label. The label height must match the loaded tape.
-    pub fn print(&self, td: &TapeDisplay) -> Result<(), PrinterError> {
-        self.print_stream(&gen_tcp_data(td), Some(td.height))
+    /// Print a rendered label. It must have been rendered for the loaded tape.
+    pub fn print(&self, label: &Label) -> Result<(), PrinterError> {
+        self.print_stream(&gen_tcp_data(label.bitmap()), Some(label.tape()))
     }
 
     /// Print an already encoded raster stream (see [`gen_tcp_data`]).
@@ -146,16 +147,16 @@ impl Printer {
         Ok(socket)
     }
 
-    fn print_stream(&self, data: &[u8], label_px: Option<usize>) -> Result<(), PrinterError> {
+    fn print_stream(&self, data: &[u8], label_tape: Option<Tape>) -> Result<(), PrinterError> {
         let socket = self.control_socket()?;
         let tape = match protocol::status(&socket, self.addr)? {
             Status::Idle { tape } => tape,
             s => return Err(PrinterError::from_status(s)),
         };
-        if let Some(label_px) = label_px {
-            if label_px != tape.width_px() as usize {
+        if let Some(label_tape) = label_tape {
+            if label_tape != tape {
                 return Err(PrinterError::TapeMismatch {
-                    label_px,
+                    label: label_tape,
                     loaded: tape,
                 });
             }

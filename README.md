@@ -7,7 +7,7 @@ This is a fork of [hikalium/sr5900p](https://github.com/hikalium/sr5900p).
 ![](./assets/test_pattern_18mm.png)
 ![](./assets/qr_text_18mm.png)
 
-```
+```sh
 # Install
 make install
 
@@ -36,7 +36,7 @@ Text is rendered with TTF/OTF fonts, so Japanese text and multiple fonts and siz
 A label longer than the template's `max_length_mm` is rejected instead of printed.
 See `src/label/template.rs` for the format and `templates/` for examples.
 
-```
+```sh
 sr5900p print --dry-run --width 12 --template templates/shelf.toml \
   --field dept=開発部 --field shelf_id=SH-A03
 ```
@@ -48,11 +48,29 @@ From Rust (the `cli` feature only builds the command, so library users can turn 
 sr5900p = { git = "https://github.com/uzuna/sr5900p", default-features = false }
 ```
 
-```rust
-let td = Template::load("templates/shelf.toml")?.render(&fields, Tape::W12)?;
-sr5900p::label::save_preview("preview.png", &td)?;
-sr5900p::printer::Printer::new(printer_ip).print(&td)?;
+```rust,no_run
+use sr5900p::label::{template::Template, LabelData, Renderer};
+use sr5900p::printer::Printer;
+use sr5900p::Tape;
+use std::time::Duration;
+
+fn main() -> Result<(), sr5900p::Error> {
+    // load the template and its fonts once, then render as many labels as needed
+    let renderer = Renderer::new(Template::load("templates/shelf.toml")?)?;
+    let label = renderer.render(
+        &LabelData::new().text("dept", "開発部").text("shelf_id", "SH-A03"),
+        Tape::W12,
+    )?;
+    std::fs::write("preview.png", label.to_png()?).expect("write preview.png");
+    Printer::new("192.168.11.16".parse().unwrap())
+        .timeout(Duration::from_secs(5))
+        .print(&label)?;
+    Ok(())
+}
 ```
+
+Errors are typed (`label::error::LabelError`, `printer::PrinterError`, or `sr5900p::Error` for both),
+and every network wait is bounded by `Printer::timeout` / `Printer::print_timeout`.
 
 ## License
 MIT

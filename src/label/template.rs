@@ -31,6 +31,9 @@
 use crate::label::display::TapeDisplay;
 use crate::label::error::CodeKind;
 use crate::label::error::LabelError;
+use crate::label::px_to_mm;
+use crate::label::Label;
+use crate::label::LabelData;
 use crate::Tape;
 use ab_glyph::point;
 use ab_glyph::Font;
@@ -151,20 +154,15 @@ impl Template {
         Self::from_toml_str(&s, base_dir)
     }
 
-    /// Render the label for the given tape. The result is `tape.width_px()` px high.
-    pub fn render(
+    /// Render one label with fonts that are already loaded.
+    /// The result is `tape.width_px()` px high.
+    fn render_with(
         &self,
+        fonts: &HashMap<String, FontVec>,
         fields: &HashMap<String, String>,
         tape: Tape,
     ) -> Result<TapeDisplay, LabelError> {
         let h = tape.width_px() as usize;
-        let mut fonts = HashMap::new();
-        for (name, spec) in &self.fonts {
-            fonts.insert(
-                name.as_str(),
-                load_font(&self.resolve(&spec.path), spec.index)?,
-            );
-        }
         let mut parts = Vec::new();
         for c in &self.columns {
             parts.push(match c {
@@ -232,8 +230,40 @@ impl Template {
     }
 }
 
-fn px_to_mm(px: usize) -> f32 {
-    px as f32 * 25.4 / 360.0
+/// Renders labels from one template. Fonts are loaded once when the renderer is created.
+pub struct Renderer {
+    template: Template,
+    fonts: HashMap<String, FontVec>,
+}
+
+impl Renderer {
+    pub fn new(template: Template) -> Result<Self, LabelError> {
+        let mut fonts = HashMap::new();
+        for (name, spec) in &template.fonts {
+            fonts.insert(
+                name.clone(),
+                load_font(&template.resolve(&spec.path), spec.index)?,
+            );
+        }
+        // reject a misspelled font name now rather than on the first render
+        for c in &template.columns {
+            if let Column::Text { lines } = c {
+                if let Some(l) = lines.iter().find(|l| !fonts.contains_key(&l.font)) {
+                    return Err(LabelError::UnknownFont(l.font.clone()));
+                }
+            }
+        }
+        Ok(Self { template, fonts })
+    }
+
+    pub fn template(&self) -> &Template {
+        &self.template
+    }
+
+    pub fn render(&self, data: &LabelData, tape: Tape) -> Result<Label, LabelError> {
+        let bitmap = self.template.render_with(&self.fonts, &data.texts, tape)?;
+        Label::new(bitmap, tape)
+    }
 }
 
 fn frac_px(h: usize, frac: f32) -> usize {
@@ -444,6 +474,27 @@ mod tests {
             .collect()
     }
 
+    trait RenderExt {
+        fn render(
+            self,
+            fields: &HashMap<String, String>,
+            tape: Tape,
+        ) -> Result<TapeDisplay, LabelError>;
+    }
+
+    impl RenderExt for Template {
+        fn render(
+            self,
+            fields: &HashMap<String, String>,
+            tape: Tape,
+        ) -> Result<TapeDisplay, LabelError> {
+            let data = LabelData {
+                texts: fields.clone(),
+            };
+            Ok(Renderer::new(self)?.render(&data, tape)?.bitmap().clone())
+        }
+    }
+
     fn template(body: &str) -> Template {
         // [fonts] goes last so that top-level keys in body stay top-level
         let s = format!("{body}\n[fonts]\nbold = {{ path = \"{BOLD}\" }}\n");
@@ -527,10 +578,58 @@ lines = [{ text = "{name}", font = "bold", size = 1.0 }]
         let too_short = template(&format!("max_length_mm = {}\n{body}", len_mm - 1.0));
         let err = too_short
             .render(&f, Tape::W12)
-            .err()
-            .expect("should be rejected")
+            .expect_err("should be rejected")
             .to_string();
         assert!(err.contains("exceeds max_length_mm"), "{err}");
+    }
+
+    #[test]
+    fn renderer_keeps_fonts_loaded_after_the_file_is_gone() {
+        // the renderer must not read font files per render
+        let dir = std::env::temp_dir().join(format!("sr5900p-font-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let font = dir.join("bold.ttc");
+        std::fs::copy(BOLD, &font).unwrap();
+        let t = Template::from_toml_str(
+            &format!(
+                r#"
+[[columns]]
+type = "text"
+lines = [{{ text = "{{id}}", font = "bold", size = 0.5 }}]
+[fonts]
+bold = {{ path = "{}" }}
+"#,
+                font.display()
+            ),
+            ".",
+        )
+        .unwrap();
+        let renderer = Renderer::new(t).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        for id in ["A-1", "B-22"] {
+            let label = renderer
+                .render(&LabelData::new().text("id", id), Tape::W12)
+                .unwrap();
+            assert_eq!(label.tape(), Tape::W12);
+            assert!(label.length_mm() > 0.0);
+        }
+    }
+
+    #[test]
+    fn renderer_new_rejects_undefined_font() {
+        // the misspelling must surface when the renderer is created, before any label is rendered
+        let t = template(
+            r#"
+[[columns]]
+type = "text"
+lines = [{ text = "x", font = "nope", size = 0.5 }]
+"#,
+        );
+        let err = Renderer::new(t).err().expect("should be rejected");
+        assert!(
+            matches!(&err, LabelError::UnknownFont(name) if name == "nope"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -544,8 +643,7 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
         );
         let err = t
             .render(&fields(&[]), Tape::W12)
-            .err()
-            .expect("should be rejected")
+            .expect_err("should be rejected")
             .to_string();
         assert!(err.contains("'nope'"), "{err}");
     }
@@ -579,8 +677,7 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
     #[test]
     fn render_datamatrix_rejects_too_small_height() {
         let err = render_datamatrix("SH-A03", 5, DatamatrixShape::Square)
-            .err()
-            .expect("should be rejected");
+            .expect_err("should be rejected");
         assert!(err.to_string().contains("only 5 px"), "{err}");
     }
 

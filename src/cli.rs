@@ -21,18 +21,15 @@ use image::Luma;
 use qrcode::QrCode;
 use sr5900p::label::display::TapeDisplay;
 use sr5900p::label::mm_to_px;
-use sr5900p::label::save_preview;
 use sr5900p::label::template::Template;
+use sr5900p::label::Label;
+use sr5900p::label::LabelData;
+use sr5900p::label::Renderer;
 use sr5900p::printer::gen_tcp_data;
 use sr5900p::printer::Printer;
 use sr5900p::printer::Status;
 use sr5900p::Tape;
-use std::collections::HashMap;
 use std::net::ToSocketAddrs;
-
-fn determine_tape_width_px(args: &PrintArgs) -> Result<i32> {
-    Ok(determine_tape(args)?.width_px())
-}
 
 /// Accepts a host name as well as an IP address.
 fn printer(host: &str) -> Result<Printer> {
@@ -82,7 +79,8 @@ fn determine_tape(args: &PrintArgs) -> Result<Tape> {
 
 fn print_qr_text(args: &PrintArgs) -> Result<()> {
     let text = args.qr_text.as_ref().expect("Please specify --qr-text");
-    let tape_width_px = determine_tape_width_px(args)? as usize;
+    let tape = determine_tape(args)?;
+    let tape_width_px = tape.width_px() as usize;
     let qr_td = {
         let mut td = TapeDisplay::new(tape_width_px, tape_width_px);
         let tape_width_px = tape_width_px as u32;
@@ -125,7 +123,7 @@ fn print_qr_text(args: &PrintArgs) -> Result<()> {
     let mut td = TapeDisplay::new(qr_td.width + text_td.width, tape_width_px);
     td.overlay_or(&qr_td, 0, (td.height - qr_td.height) / 2);
     td.overlay_or(&text_td, qr_td.width, (td.height - text_td.height) / 2);
-    print_td(args, &td)
+    print_label(args, &Label::new(td, tape)?)
 }
 
 fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
@@ -133,7 +131,8 @@ fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
         .qr_text_small
         .as_ref()
         .expect("Please specify --qr-text-small");
-    let tape_width_px = determine_tape_width_px(args)? as usize;
+    let tape = determine_tape(args)?;
+    let tape_width_px = tape.width_px() as usize;
     let qr_td = {
         let mut td = TapeDisplay::new(tape_width_px, tape_width_px);
         let tape_width_px = tape_width_px as u32;
@@ -181,7 +180,7 @@ fn print_qr_text_small(args: &PrintArgs) -> Result<()> {
         qr_td.width * 9 / 10,
         (td.height - text_td.height) / 2,
     );
-    print_td(args, &td)
+    print_label(args, &Label::new(td, tape)?)
 }
 
 fn print_template(args: &PrintArgs) -> Result<()> {
@@ -189,32 +188,32 @@ fn print_template(args: &PrintArgs) -> Result<()> {
         .template
         .as_ref()
         .context("Please specify --template")?;
-    let template = Template::load(path)?;
-    let mut fields = HashMap::new();
+    let renderer = Renderer::new(Template::load(path)?)?;
+    let mut data = LabelData::new();
     for f in &args.field {
         let (k, v) = f
             .split_once('=')
             .ok_or_else(|| anyhow!("--field must be key=value: {f:?}"))?;
-        fields.insert(k.to_string(), v.to_string());
+        data = data.text(k, v);
     }
     let tape = determine_tape(args)?;
-    let td = template.render(&fields, tape)?;
-    print_td(args, &td)
+    print_label(args, &renderer.render(&data, tape)?)
 }
 
-fn print_td(args: &PrintArgs, td: &TapeDisplay) -> Result<()> {
-    save_preview("preview.png", td)?;
+fn print_label(args: &PrintArgs, label: &Label) -> Result<()> {
+    std::fs::write("preview.png", label.to_png()?)?;
 
     if !args.dry_run {
-        printer(args.printer.as_ref().context("Please specify --printer")?)?.print(td)?;
+        printer(args.printer.as_ref().context("Please specify --printer")?)?.print(label)?;
         Ok(())
     } else {
-        analyze_tcp_data(&gen_tcp_data(td))
+        analyze_tcp_data(&gen_tcp_data(label.bitmap()))
     }
 }
 
 fn print_test_pattern(args: &PrintArgs) -> Result<()> {
-    let tape_width_px = determine_tape_width_px(args)?;
+    let tape = determine_tape(args)?;
+    let tape_width_px = tape.width_px();
     // td represents a tape segment
     let mut td = TapeDisplay::new(mm_to_px(40.0) as usize, tape_width_px as usize);
     // 1mm outline
@@ -310,7 +309,7 @@ fn print_test_pattern(args: &PrintArgs) -> Result<()> {
         (td.width - text_td.width) / 2,
         (td.height - text_td.height) / 2,
     );
-    print_td(args, &td)
+    print_label(args, &Label::new(td, tape)?)
 }
 
 #[derive(FromArgs, PartialEq, Debug)]

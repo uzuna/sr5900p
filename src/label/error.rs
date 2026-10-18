@@ -31,6 +31,8 @@ pub enum LabelError {
     Font { path: PathBuf, reason: String },
     #[error("failed to load image {}: {reason}", path.display())]
     Image { path: PathBuf, reason: String },
+    #[error("failed to encode PNG: {0}")]
+    Png(String),
     #[error("the bitmap is {height} px high but {tape:?} tape takes {} px", tape.width_px())]
     HeightMismatch { height: usize, tape: Tape },
 }

@@ -1,19 +1,16 @@
 //! The bundled templates parse, render and fit within their max_length_mm
 //! on 12mm tape with typical values.
+use sr5900p::label::error::LabelError;
 use sr5900p::label::template::Template;
+use sr5900p::label::Label;
+use sr5900p::label::LabelData;
+use sr5900p::label::Renderer;
 use sr5900p::Tape;
-use std::collections::HashMap;
 
-fn render(
-    name: &str,
-    kv: &[(&str, &str)],
-) -> Result<sr5900p::label::display::TapeDisplay, sr5900p::label::error::LabelError> {
+fn render(name: &str, kv: &[(&str, &str)]) -> Result<Label, LabelError> {
     let t = Template::load(format!("{}/templates/{name}", env!("CARGO_MANIFEST_DIR")))?;
-    let fields: HashMap<String, String> = kv
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    t.render(&fields, Tape::W12)
+    let data = kv.iter().fold(LabelData::new(), |d, (k, v)| d.text(*k, *v));
+    Renderer::new(t)?.render(&data, Tape::W12)
 }
 
 #[test]
@@ -42,7 +39,7 @@ fn bundled_templates_render_on_12mm() {
     ];
     for (name, kv) in cases {
         let td = render(name, kv).unwrap_or_else(|e| panic!("{name}: {e:#}"));
-        assert_eq!(td.height, Tape::W12.width_px() as usize, "{name}");
+        assert_eq!(td.bitmap().height, Tape::W12.width_px() as usize, "{name}");
     }
 }
 
@@ -53,7 +50,6 @@ fn bundled_template_rejects_too_long_text() {
         "asset.toml",
         &[("name", &long), ("id", "IT-2026-0042"), ("dept", "開発部")],
     )
-    .err()
-    .expect("should be rejected");
+    .expect_err("should be rejected");
     assert!(err.to_string().contains("exceeds max_length_mm"), "{err}");
 }
