@@ -4,7 +4,10 @@ use sr5900p::label::template::Template;
 use sr5900p::Tape;
 use std::collections::HashMap;
 
-fn render(name: &str, kv: &[(&str, &str)]) -> anyhow::Result<sr5900p::label::display::TapeDisplay> {
+fn render(
+    name: &str,
+    kv: &[(&str, &str)],
+) -> Result<sr5900p::label::display::TapeDisplay, sr5900p::label::error::LabelError> {
     let t = Template::load(format!("{}/templates/{name}", env!("CARGO_MANIFEST_DIR")))?;
     let fields: HashMap<String, String> = kv
         .iter()

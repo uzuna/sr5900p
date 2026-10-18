@@ -1,5 +1,6 @@
 //! Rendering labels into 1-bit bitmaps.
 pub mod display;
+pub mod error;
 pub mod template;
 
 use anyhow::Result;
