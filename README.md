@@ -51,7 +51,7 @@ sr5900p = { git = "https://github.com/uzuna/sr5900p", default-features = false }
 ```rust
 let td = Template::load("templates/shelf.toml")?.render(&fields, Tape::W12)?;
 sr5900p::label::save_preview("preview.png", &td)?;
-sr5900p::printer::print_display(printer_ip, &td)?;
+sr5900p::printer::Printer::new(printer_ip).print(&td)?;
 ```
 
 ## License

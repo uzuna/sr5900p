@@ -23,22 +23,37 @@ use sr5900p::label::display::TapeDisplay;
 use sr5900p::label::mm_to_px;
 use sr5900p::label::save_preview;
 use sr5900p::label::template::Template;
-use sr5900p::printer::detect_tape;
 use sr5900p::printer::gen_tcp_data;
-use sr5900p::printer::print_tcp_data;
+use sr5900p::printer::Printer;
+use sr5900p::printer::Status;
 use sr5900p::Tape;
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 
 fn determine_tape_width_px(args: &PrintArgs) -> Result<i32> {
     Ok(determine_tape(args)?.width_px())
 }
 
+/// Accepts a host name as well as an IP address.
+fn printer(host: &str) -> Result<Printer> {
+    let addr = (host, Printer::DEFAULT_PORT)
+        .to_socket_addrs()
+        .with_context(|| format!("Failed to resolve {host}"))?
+        .next()
+        .with_context(|| format!("No address for {host}"))?;
+    Ok(Printer::new(addr.ip()))
+}
+
 fn determine_tape(args: &PrintArgs) -> Result<Tape> {
-    let detected = if let Some(printer) = &args.printer {
-        match detect_tape(printer) {
-            Ok(t) => {
-                eprintln!("Tape detected: {:?}", t);
-                Some(t)
+    let detected = if let Some(host) = &args.printer {
+        match printer(host).and_then(|p| Ok(p.status()?)) {
+            Ok(Status::Idle { tape }) => {
+                eprintln!("Tape detected: {:?}", tape);
+                Some(tape)
+            }
+            Ok(status) => {
+                eprintln!("Failed to detect tape width. status: {:?}", status);
+                None
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -190,16 +205,11 @@ fn print_template(args: &PrintArgs) -> Result<()> {
 fn print_td(args: &PrintArgs, td: &TapeDisplay) -> Result<()> {
     save_preview("preview.png", td)?;
 
-    let tcp_data = gen_tcp_data(td)?;
-
     if !args.dry_run {
-        print_tcp_data(
-            args.printer.as_ref().context("Please specify --printer")?,
-            &tcp_data,
-        )
-    } else {
-        analyze_tcp_data(&tcp_data)?;
+        printer(args.printer.as_ref().context("Please specify --printer")?)?.print(td)?;
         Ok(())
+    } else {
+        analyze_tcp_data(&gen_tcp_data(td))
     }
 }
 
@@ -328,7 +338,7 @@ pub struct PrintArgs {
     /// print a test pattern
     #[argh(switch)]
     test_pattern: bool,
-    /// an IPv4 address for the printer
+    /// host name or IP address of the printer
     #[argh(option)]
     printer: Option<String>,
     /// label template file (TOML)

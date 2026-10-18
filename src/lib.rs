@@ -2,7 +2,6 @@ pub mod label;
 pub mod printer;
 
 use crate::label::mm_to_px;
-use crate::printer::protocol::PacketHeader;
 use anyhow::anyhow;
 use anyhow::Result;
 
@@ -43,13 +42,4 @@ impl Tape {
         // tape width in px should be multiple of 8
         (w + 7) / 8 * 8
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum PrinterStatus {
-    NoTape,
-    SomeTape(Tape),
-    CoverIsOpened,
-    Printing,
-    Unknown(PacketHeader, [u8; 20]),
 }
