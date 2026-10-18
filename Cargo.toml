@@ -3,10 +3,20 @@ name = "sr5900p"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["cli"]
+# the sr5900p command; library users can opt out with default-features = false
+cli = ["dep:argh"]
+
+[[bin]]
+name = "sr5900p"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
 ab_glyph = "0.2.32"
 anyhow = "1.0.104"
-argh = "0.1.19"
+argh = { version = "0.1.19", optional = true }
 barcoders = { version = "2.0.0", default-features = false }
 datamatrix = "0.3.3"
 embedded-graphics = "0.8.2"
