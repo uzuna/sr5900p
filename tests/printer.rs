@@ -73,10 +73,20 @@ struct Fake {
 
 impl Fake {
     fn start(behavior: Behavior) -> Self {
-        // the printer uses one port number for UDP and TCP, so take a free TCP port and bind UDP to it
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let udp = UdpSocket::bind(("127.0.0.1", port)).unwrap();
+        // the printer uses one port number for UDP and TCP, so take a free TCP port and bind UDP
+        // to it; the UDP side may already be taken by a client socket of a test running in
+        // parallel, so try another port then
+        let (listener, port, udp) = (0..100)
+            .find_map(|_| {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let port = listener.local_addr().unwrap().port();
+                match UdpSocket::bind(("127.0.0.1", port)) {
+                    Ok(udp) => Some((listener, port, udp)),
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => None,
+                    Err(e) => panic!("{e}"),
+                }
+            })
+            .expect("no port free for both TCP and UDP");
         let log = Arc::new(Mutex::new(Log::default()));
         let streamed = Arc::new(Mutex::new(false));
 
