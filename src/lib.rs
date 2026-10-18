@@ -1,11 +1,8 @@
-pub mod analyzer;
-pub mod display;
-pub mod print;
-pub mod protocol;
-pub mod template;
+pub mod label;
+pub mod printer;
 
-use crate::print::mm_to_px;
-use crate::protocol::PacketHeader;
+use crate::label::mm_to_px;
+use crate::printer::protocol::PacketHeader;
 use anyhow::anyhow;
 use anyhow::Result;
 

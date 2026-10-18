@@ -34,7 +34,7 @@ sr5900p print --printer ${PRINTER_IP} --qr-text 'Hello, world!'
 A template (TOML) lays out text / QR code / image columns from left to right.
 Text is rendered with TTF/OTF fonts, so Japanese text and multiple fonts and sizes are supported.
 A label longer than the template's `max_length_mm` is rejected instead of printed.
-See `src/template.rs` for the format and `templates/` for examples.
+See `src/label/template.rs` for the format and `templates/` for examples.
 
 ```
 sr5900p print --dry-run --width 12 --template templates/shelf.toml \
@@ -45,8 +45,8 @@ From Rust:
 
 ```rust
 let td = Template::load("templates/shelf.toml")?.render(&fields, Tape::W12)?;
-sr5900p::print::save_preview("preview.png", &td)?;
-sr5900p::print::print_display(printer_ip, &td)?;
+sr5900p::label::save_preview("preview.png", &td)?;
+sr5900p::printer::print_display(printer_ip, &td)?;
 ```
 
 ## License

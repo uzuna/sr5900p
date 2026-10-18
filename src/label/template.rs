@@ -28,7 +28,7 @@
 //! `size` is a fraction of the printable height.
 //! When the rendered label is longer than `max_length_mm`, rendering fails
 //! instead of printing a label that does not fit.
-use crate::display::TapeDisplay;
+use crate::label::display::TapeDisplay;
 use crate::Tape;
 use ab_glyph::point;
 use ab_glyph::Font;
@@ -185,7 +185,7 @@ impl Template {
                     size,
                     module_mm,
                 } => {
-                    let module = crate::print::mm_to_px(*module_mm).max(1) as usize;
+                    let module = crate::label::mm_to_px(*module_mm).max(1) as usize;
                     let bc = render_code128(&expand(data, fields)?, frac_px(h, *size), module)?;
                     center_vertical(&bc, h)
                 }
@@ -195,11 +195,11 @@ impl Template {
                 }
             });
         }
-        let gap = crate::print::mm_to_px(self.gap_mm) as usize;
+        let gap = crate::label::mm_to_px(self.gap_mm) as usize;
         let width =
             parts.iter().map(|p| p.width).sum::<usize>() + gap * parts.len().saturating_sub(1);
         if let Some(max_mm) = self.max_length_mm {
-            if width > crate::print::mm_to_px(max_mm) as usize {
+            if width > crate::label::mm_to_px(max_mm) as usize {
                 return Err(anyhow!(
                     "Label is {:.1} mm long, which exceeds max_length_mm = {max_mm}",
                     px_to_mm(width)
@@ -460,7 +460,7 @@ lines = [{ text = "{id}", font = "bold", size = 0.5 }]
         .render(&f, Tape::W12)
         .unwrap();
         // text + gap + QR (a square of the full height)
-        let gap = crate::print::mm_to_px(2.0) as usize;
+        let gap = crate::label::mm_to_px(2.0) as usize;
         assert_eq!(td.width, text_only.width + gap + h);
         // the gap is blank and the QR column is placed right after it
         let qr = render_qr("SH-A03", h).unwrap();
