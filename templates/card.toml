@@ -6,10 +6,14 @@ max_length_mm = 50
 [fonts]
 bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
 medium = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc" }
+black = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc" }
 
+# 用途ロゴ。アプリが slot "logo" へ部門・製品のロゴを差し込める。無ければ「貸出」のスタンプ
 [[columns]]
-type = "image"
-path = "logo_lending.png"
+type = "logo"
+slot = "logo"
+default = { text = "貸出" }
+stamp = { font = "black", vertical = true, invert = true, min_width_ratio = 1.0, padding_mm = 1.0 }
 
 [[columns]]
 type = "text"
