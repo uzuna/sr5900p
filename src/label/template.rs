@@ -29,6 +29,11 @@
 //! When the rendered label is longer than `max_length_mm`, rendering fails
 //! instead of printing a label that does not fit.
 use crate::label::display::TapeDisplay;
+use crate::label::error::CodeKind;
+use crate::label::error::LabelError;
+use crate::label::px_to_mm;
+use crate::label::Label;
+use crate::label::LabelData;
 use crate::Tape;
 use ab_glyph::point;
 use ab_glyph::Font;
@@ -36,9 +41,6 @@ use ab_glyph::FontVec;
 use ab_glyph::GlyphId;
 use ab_glyph::PxScale;
 use ab_glyph::ScaleFont;
-use anyhow::anyhow;
-use anyhow::Context;
-use anyhow::Result;
 use barcoders::sym::code128::Code128;
 use datamatrix::DataMatrix;
 use datamatrix::SymbolList;
@@ -134,39 +136,42 @@ pub struct Line {
 }
 
 impl Template {
-    pub fn from_toml_str(s: &str, base_dir: impl Into<PathBuf>) -> Result<Self> {
-        let mut t: Template = toml::from_str(s).context("Failed to parse template")?;
+    pub fn from_toml_str(s: &str, base_dir: impl Into<PathBuf>) -> Result<Self, LabelError> {
+        let mut t: Template =
+            toml::from_str(s).map_err(|e| LabelError::InvalidTemplate(e.to_string()))?;
         t.base_dir = base_dir.into();
         Ok(t)
     }
 
-    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, LabelError> {
         let path = path.as_ref();
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read template {}", path.display()))?;
+        let s = std::fs::read_to_string(path).map_err(|source| LabelError::Io {
+            what: "template",
+            path: path.to_path_buf(),
+            source,
+        })?;
         let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
         Self::from_toml_str(&s, base_dir)
     }
 
-    /// Render the label for the given tape. The result is `tape.width_px()` px high.
-    pub fn render(&self, fields: &HashMap<String, String>, tape: Tape) -> Result<TapeDisplay> {
+    /// Render one label with fonts that are already loaded.
+    /// The result is `tape.width_px()` px high.
+    fn render_with(
+        &self,
+        fonts: &HashMap<String, FontVec>,
+        fields: &HashMap<String, String>,
+        tape: Tape,
+    ) -> Result<TapeDisplay, LabelError> {
         let h = tape.width_px() as usize;
-        let mut fonts = HashMap::new();
-        for (name, spec) in &self.fonts {
-            fonts.insert(
-                name.as_str(),
-                load_font(&self.resolve(&spec.path), spec.index)?,
-            );
-        }
         let mut parts = Vec::new();
         for c in &self.columns {
             parts.push(match c {
                 Column::Text { lines } => {
                     let mut rendered = Vec::new();
                     for l in lines {
-                        let font = fonts.get(l.font.as_str()).ok_or_else(|| {
-                            anyhow!("Font '{}' is not defined in [fonts]", l.font)
-                        })?;
+                        let font = fonts
+                            .get(l.font.as_str())
+                            .ok_or_else(|| LabelError::UnknownFont(l.font.clone()))?;
                         let text = expand(&l.text, fields)?;
                         rendered.push(render_text(font, &text, frac_px(h, l.size)));
                     }
@@ -200,10 +205,10 @@ impl Template {
             parts.iter().map(|p| p.width).sum::<usize>() + gap * parts.len().saturating_sub(1);
         if let Some(max_mm) = self.max_length_mm {
             if width > crate::label::mm_to_px(max_mm) as usize {
-                return Err(anyhow!(
-                    "Label is {:.1} mm long, which exceeds max_length_mm = {max_mm}",
-                    px_to_mm(width)
-                ));
+                return Err(LabelError::TooLong {
+                    length_mm: px_to_mm(width),
+                    max_mm,
+                });
             }
         }
         let mut td = TapeDisplay::new(width, h);
@@ -225,8 +230,40 @@ impl Template {
     }
 }
 
-fn px_to_mm(px: usize) -> f32 {
-    px as f32 * 25.4 / 360.0
+/// Renders labels from one template. Fonts are loaded once when the renderer is created.
+pub struct Renderer {
+    template: Template,
+    fonts: HashMap<String, FontVec>,
+}
+
+impl Renderer {
+    pub fn new(template: Template) -> Result<Self, LabelError> {
+        let mut fonts = HashMap::new();
+        for (name, spec) in &template.fonts {
+            fonts.insert(
+                name.clone(),
+                load_font(&template.resolve(&spec.path), spec.index)?,
+            );
+        }
+        // reject a misspelled font name now rather than on the first render
+        for c in &template.columns {
+            if let Column::Text { lines } = c {
+                if let Some(l) = lines.iter().find(|l| !fonts.contains_key(&l.font)) {
+                    return Err(LabelError::UnknownFont(l.font.clone()));
+                }
+            }
+        }
+        Ok(Self { template, fonts })
+    }
+
+    pub fn template(&self) -> &Template {
+        &self.template
+    }
+
+    pub fn render(&self, data: &LabelData, tape: Tape) -> Result<Label, LabelError> {
+        let bitmap = self.template.render_with(&self.fonts, &data.texts, tape)?;
+        Label::new(bitmap, tape)
+    }
 }
 
 fn frac_px(h: usize, frac: f32) -> usize {
@@ -234,19 +271,19 @@ fn frac_px(h: usize, frac: f32) -> usize {
 }
 
 /// Replace `{name}` with fields[name]. An undefined name is an error.
-fn expand(template: &str, fields: &HashMap<String, String>) -> Result<String> {
+fn expand(template: &str, fields: &HashMap<String, String>) -> Result<String, LabelError> {
     let mut out = String::new();
     let mut rest = template;
     while let Some(start) = rest.find('{') {
         out.push_str(&rest[..start]);
         let end = rest[start..]
             .find('}')
-            .ok_or_else(|| anyhow!("Unclosed '{{' in {template:?}"))?
+            .ok_or_else(|| LabelError::UnclosedPlaceholder(template.to_string()))?
             + start;
         let name = &rest[start + 1..end];
         let v = fields
             .get(name)
-            .ok_or_else(|| anyhow!("Field '{name}' is required by the template"))?;
+            .ok_or_else(|| LabelError::MissingField(name.to_string()))?;
         out.push_str(v);
         rest = &rest[end + 1..];
     }
@@ -271,11 +308,16 @@ fn center_vertical(part: &TapeDisplay, h: usize) -> TapeDisplay {
     td
 }
 
-fn load_font(path: &Path, index: u32) -> Result<FontVec> {
-    let data =
-        std::fs::read(path).with_context(|| format!("Failed to read font {}", path.display()))?;
-    FontVec::try_from_vec_and_index(data, index)
-        .map_err(|e| anyhow!("Failed to load font {}: {e}", path.display()))
+fn load_font(path: &Path, index: u32) -> Result<FontVec, LabelError> {
+    let data = std::fs::read(path).map_err(|source| LabelError::Io {
+        what: "font",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    FontVec::try_from_vec_and_index(data, index).map_err(|e| LabelError::Font {
+        path: path.to_path_buf(),
+        reason: e.to_string(),
+    })
 }
 
 /// Render a single line of text whose line height (ascent - descent) is line_px.
@@ -311,10 +353,13 @@ fn render_text(font: &FontVec, text: &str, line_px: usize) -> TapeDisplay {
     td
 }
 
-fn render_qr(text: &str, size_px: usize) -> Result<TapeDisplay> {
+fn render_qr(text: &str, size_px: usize) -> Result<TapeDisplay, LabelError> {
     let mut td = TapeDisplay::new(size_px, size_px);
     let size_px = size_px as u32;
-    let code = QrCode::new(text).context("Failed to generate a QR code")?;
+    let code = QrCode::new(text).map_err(|e| LabelError::Encode {
+        kind: CodeKind::Qr,
+        reason: e.to_string(),
+    })?;
     let image = code
         .render::<Luma<u8>>()
         .quiet_zone(false)
@@ -329,10 +374,17 @@ fn render_qr(text: &str, size_px: usize) -> Result<TapeDisplay> {
 }
 
 /// Render a Code128 barcode (character set B) with 10-module quiet zones on both sides.
-fn render_code128(text: &str, height_px: usize, module_px: usize) -> Result<TapeDisplay> {
+fn render_code128(
+    text: &str,
+    height_px: usize,
+    module_px: usize,
+) -> Result<TapeDisplay, LabelError> {
     const QUIET_ZONE: usize = 10;
     let bars = Code128::new(format!("\u{0181}{text}"))
-        .map_err(|e| anyhow!("Failed to generate a Code128 barcode for {text:?}: {e}"))?
+        .map_err(|e| LabelError::Encode {
+            kind: CodeKind::Code128,
+            reason: format!("{text:?}: {e}"),
+        })?
         .encode();
     let mut td = TapeDisplay::new((bars.len() + 2 * QUIET_ZONE) * module_px, height_px);
     for (i, bar) in bars.iter().enumerate() {
@@ -348,20 +400,30 @@ fn render_code128(text: &str, height_px: usize, module_px: usize) -> Result<Tape
 }
 
 /// Render a Data Matrix whose height is at most height_px, with whole-pixel modules.
-fn render_datamatrix(text: &str, height_px: usize, shape: DatamatrixShape) -> Result<TapeDisplay> {
+fn render_datamatrix(
+    text: &str,
+    height_px: usize,
+    shape: DatamatrixShape,
+) -> Result<TapeDisplay, LabelError> {
     let symbols = match shape {
         DatamatrixShape::Square => SymbolList::default().enforce_square(),
         DatamatrixShape::Rectangle => SymbolList::default().enforce_rectangular(),
     };
     let bitmap = DataMatrix::encode_str(text, symbols)
-        .map_err(|e| anyhow!("Failed to generate a Data Matrix: {e:?}"))?
+        .map_err(|e| LabelError::Encode {
+            kind: CodeKind::DataMatrix,
+            reason: format!("{e:?}"),
+        })?
         .bitmap();
     let module = height_px / bitmap.height();
     if module == 0 {
-        return Err(anyhow!(
-            "Data Matrix needs {} px but only {height_px} px is available",
-            bitmap.height()
-        ));
+        return Err(LabelError::Encode {
+            kind: CodeKind::DataMatrix,
+            reason: format!(
+                "needs {} px but only {height_px} px is available",
+                bitmap.height()
+            ),
+        });
     }
     let mut td = TapeDisplay::new(bitmap.width() * module, bitmap.height() * module);
     for (x, y) in bitmap.pixels() {
@@ -376,9 +438,12 @@ fn render_datamatrix(text: &str, height_px: usize, shape: DatamatrixShape) -> Re
 
 /// Scale the image to height_px (keeping aspect) and binarize it.
 /// Dark opaque pixels are printed; transparent pixels are left blank.
-fn render_image(path: &Path, height_px: usize) -> Result<TapeDisplay> {
+fn render_image(path: &Path, height_px: usize) -> Result<TapeDisplay, LabelError> {
     let img = image::open(path)
-        .with_context(|| format!("Failed to open image {}", path.display()))?
+        .map_err(|e| LabelError::Image {
+            path: path.to_path_buf(),
+            reason: e.to_string(),
+        })?
         .to_rgba8();
     let width_px =
         (img.width() as usize * height_px + img.height() as usize / 2) / img.height() as usize;
@@ -407,6 +472,27 @@ mod tests {
         kv.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    trait RenderExt {
+        fn render(
+            self,
+            fields: &HashMap<String, String>,
+            tape: Tape,
+        ) -> Result<TapeDisplay, LabelError>;
+    }
+
+    impl RenderExt for Template {
+        fn render(
+            self,
+            fields: &HashMap<String, String>,
+            tape: Tape,
+        ) -> Result<TapeDisplay, LabelError> {
+            let data = LabelData {
+                texts: fields.clone(),
+            };
+            Ok(Renderer::new(self)?.render(&data, tape)?.bitmap().clone())
+        }
     }
 
     fn template(body: &str) -> Template {
@@ -492,10 +578,58 @@ lines = [{ text = "{name}", font = "bold", size = 1.0 }]
         let too_short = template(&format!("max_length_mm = {}\n{body}", len_mm - 1.0));
         let err = too_short
             .render(&f, Tape::W12)
-            .err()
-            .expect("should be rejected")
+            .expect_err("should be rejected")
             .to_string();
         assert!(err.contains("exceeds max_length_mm"), "{err}");
+    }
+
+    #[test]
+    fn renderer_keeps_fonts_loaded_after_the_file_is_gone() {
+        // the renderer must not read font files per render
+        let dir = std::env::temp_dir().join(format!("sr5900p-font-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let font = dir.join("bold.ttc");
+        std::fs::copy(BOLD, &font).unwrap();
+        let t = Template::from_toml_str(
+            &format!(
+                r#"
+[[columns]]
+type = "text"
+lines = [{{ text = "{{id}}", font = "bold", size = 0.5 }}]
+[fonts]
+bold = {{ path = "{}" }}
+"#,
+                font.display()
+            ),
+            ".",
+        )
+        .unwrap();
+        let renderer = Renderer::new(t).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        for id in ["A-1", "B-22"] {
+            let label = renderer
+                .render(&LabelData::new().text("id", id), Tape::W12)
+                .unwrap();
+            assert_eq!(label.tape(), Tape::W12);
+            assert!(label.length_mm() > 0.0);
+        }
+    }
+
+    #[test]
+    fn renderer_new_rejects_undefined_font() {
+        // the misspelling must surface when the renderer is created, before any label is rendered
+        let t = template(
+            r#"
+[[columns]]
+type = "text"
+lines = [{ text = "x", font = "nope", size = 0.5 }]
+"#,
+        );
+        let err = Renderer::new(t).err().expect("should be rejected");
+        assert!(
+            matches!(&err, LabelError::UnknownFont(name) if name == "nope"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -509,8 +643,7 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
         );
         let err = t
             .render(&fields(&[]), Tape::W12)
-            .err()
-            .expect("should be rejected")
+            .expect_err("should be rejected")
             .to_string();
         assert!(err.contains("'nope'"), "{err}");
     }
@@ -544,8 +677,7 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
     #[test]
     fn render_datamatrix_rejects_too_small_height() {
         let err = render_datamatrix("SH-A03", 5, DatamatrixShape::Square)
-            .err()
-            .expect("should be rejected");
+            .expect_err("should be rejected");
         assert!(err.to_string().contains("only 5 px"), "{err}");
     }
 
