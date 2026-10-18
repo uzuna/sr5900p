@@ -41,7 +41,12 @@ sr5900p print --dry-run --width 12 --template templates/shelf.toml \
   --field dept=開発部 --field shelf_id=SH-A03
 ```
 
-From Rust:
+From Rust (the `cli` feature only builds the command, so library users can turn it off):
+
+```toml
+[dependencies]
+sr5900p = { git = "https://github.com/uzuna/sr5900p", default-features = false }
+```
 
 ```rust
 let td = Template::load("templates/shelf.toml")?.render(&fields, Tape::W12)?;
