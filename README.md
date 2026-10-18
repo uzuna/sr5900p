@@ -7,7 +7,7 @@ This is a fork of [hikalium/sr5900p](https://github.com/hikalium/sr5900p).
 ![](./assets/test_pattern_18mm.png)
 ![](./assets/qr_text_18mm.png)
 
-```
+```sh
 # Install
 make install
 
@@ -34,11 +34,21 @@ sr5900p print --printer ${PRINTER_IP} --qr-text 'Hello, world!'
 A template (TOML) lays out text / QR code / image columns from left to right.
 Text is rendered with TTF/OTF fonts, so Japanese text and multiple fonts and sizes are supported.
 A label longer than the template's `max_length_mm` is rejected instead of printed.
+
+A `logo` column holds a logo chosen per label: an image (PNG or SVG; SVG is drawn at the logo
+column's height so it stays sharp on every tape; binarized by threshold or dithering, optionally inverted) or a text stamp (e.g. a department name, optionally vertical and white on black).
+The application registers logos once (`Renderer::register_logo`) and picks one per label
+(`LabelData::logo`), or passes one inline (`LabelData::logo_inline`).
+The column can name a default (`{ text = ... }`, `{ path = ... }` or `{ key = ... }`).
+See `src/label/logo.rs` and `templates/card.toml`.
 See `src/label/template.rs` for the format and `templates/` for examples.
 
-```
+```sh
 sr5900p print --dry-run --width 12 --template templates/shelf.toml \
   --field dept=開発部 --field shelf_id=SH-A03
+# logo columns take --logo-image slot=image.png or --stamp slot=text
+sr5900p print --dry-run --width 12 --template templates/card.toml \
+  --field card_id=EMP-0123 --field token=abc --stamp logo=総務
 ```
 
 From Rust (the `cli` feature only builds the command, so library users can turn it off):
@@ -48,11 +58,29 @@ From Rust (the `cli` feature only builds the command, so library users can turn 
 sr5900p = { git = "https://github.com/uzuna/sr5900p", default-features = false }
 ```
 
-```rust
-let td = Template::load("templates/shelf.toml")?.render(&fields, Tape::W12)?;
-sr5900p::label::save_preview("preview.png", &td)?;
-sr5900p::printer::print_display(printer_ip, &td)?;
+```rust,no_run
+use sr5900p::label::{template::Template, LabelData, Renderer};
+use sr5900p::printer::Printer;
+use sr5900p::Tape;
+use std::time::Duration;
+
+fn main() -> Result<(), sr5900p::Error> {
+    // load the template and its fonts once, then render as many labels as needed
+    let renderer = Renderer::new(Template::load("templates/shelf.toml")?)?;
+    let label = renderer.render(
+        &LabelData::new().text("dept", "開発部").text("shelf_id", "SH-A03"),
+        Tape::W12,
+    )?;
+    std::fs::write("preview.png", label.to_png()?).expect("write preview.png");
+    Printer::new("192.168.11.16".parse().unwrap())
+        .timeout(Duration::from_secs(5))
+        .print(&label)?;
+    Ok(())
+}
 ```
+
+Errors are typed (`label::error::LabelError`, `printer::PrinterError`, or `sr5900p::Error` for both),
+and every network wait is bounded by `Printer::timeout` / `Printer::print_timeout`.
 
 ## License
 MIT

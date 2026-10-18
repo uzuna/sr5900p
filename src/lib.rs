@@ -1,10 +1,30 @@
 pub mod label;
 pub mod printer;
 
+// compiles the README examples as doctests so that they cannot drift from the API
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
+
+use crate::label::error::LabelError;
 use crate::label::mm_to_px;
-use crate::printer::protocol::PacketHeader;
-use anyhow::anyhow;
-use anyhow::Result;
+use crate::printer::PrinterError;
+
+/// Either side of rendering and printing a label, for callers that do both.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    #[error(transparent)]
+    Label(#[from] LabelError),
+    #[error(transparent)]
+    Printer(#[from] PrinterError),
+    #[error(transparent)]
+    TapeWidth(#[from] UnknownTapeWidth),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("tape for {0} mm is not defined")]
+pub struct UnknownTapeWidth(pub usize);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Tape {
@@ -17,7 +37,7 @@ pub enum Tape {
     W36,
 }
 impl Tape {
-    pub fn from_mm(mm: usize) -> Result<Self> {
+    pub fn from_mm(mm: usize) -> Result<Self, UnknownTapeWidth> {
         Ok(match mm {
             4 => Tape::W4,
             6 => Tape::W6,
@@ -26,7 +46,7 @@ impl Tape {
             18 => Tape::W18,
             24 => Tape::W24,
             36 => Tape::W36,
-            _ => return Err(anyhow!("Tape for {mm} mm is not defined")),
+            _ => return Err(UnknownTapeWidth(mm)),
         })
     }
     pub fn width_px(&self) -> i32 {
@@ -43,13 +63,4 @@ impl Tape {
         // tape width in px should be multiple of 8
         (w + 7) / 8 * 8
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum PrinterStatus {
-    NoTape,
-    SomeTape(Tape),
-    CoverIsOpened,
-    Printing,
-    Unknown(PacketHeader, [u8; 20]),
 }
