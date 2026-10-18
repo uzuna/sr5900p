@@ -25,7 +25,7 @@ pub enum LabelError {
     /// the cause is in `source`, not repeated in the message
     #[error("failed to read {what} {}", path.display())]
     Io {
-        /// what was being read ("template", "font")
+        /// what was being read ("template", "font", "image")
         what: &'static str,
         path: PathBuf,
         #[source]

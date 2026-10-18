@@ -214,8 +214,8 @@ fn print_template(args: &PrintArgs) -> Result<()> {
             .split_once('=')
             .ok_or_else(|| anyhow!("--logo-image must be slot=image-file: {l:?}"))?;
         check_slot(slot)?;
-        let bytes = std::fs::read(path).with_context(|| format!("Failed to read {path}"))?;
-        data = data.logo_inline(slot, Logo::from_image_bytes(&bytes)?);
+        // .svg files are parsed as SVG
+        data = data.logo_inline(slot, Logo::from_file(std::path::Path::new(path))?);
     }
     for s in &args.stamp {
         let (slot, text) = s
@@ -374,7 +374,7 @@ pub struct PrintArgs {
     /// template field as key=value (repeatable)
     #[argh(option)]
     field: Vec<String>,
-    /// image for a logo column as slot=image-file (repeatable)
+    /// image (PNG, SVG, ...) for a logo column as slot=image-file (repeatable)
     #[argh(option)]
     logo_image: Vec<String>,
     /// text stamp for a logo column as slot=text (repeatable)

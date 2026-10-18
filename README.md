@@ -35,8 +35,8 @@ A template (TOML) lays out text / QR code / image columns from left to right.
 Text is rendered with TTF/OTF fonts, so Japanese text and multiple fonts and sizes are supported.
 A label longer than the template's `max_length_mm` is rejected instead of printed.
 
-A `logo` column holds a logo chosen per label: an image (binarized by threshold or dithering,
-optionally inverted) or a text stamp (e.g. a department name, optionally vertical and white on black).
+A `logo` column holds a logo chosen per label: an image (PNG or SVG; SVG is drawn at the logo
+column's height so it stays sharp on every tape; binarized by threshold or dithering, optionally inverted) or a text stamp (e.g. a department name, optionally vertical and white on black).
 The application registers logos once (`Renderer::register_logo`) and picks one per label
 (`LabelData::logo`), or passes one inline (`LabelData::logo_inline`).
 The column can name a default (`{ text = ... }`, `{ path = ... }` or `{ key = ... }`).
