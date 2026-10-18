@@ -24,16 +24,25 @@
 //!
 //! Column types: `text`, `qr`, `datamatrix` (`shape = "square"` or `"rectangle"`) and `image`.
 //! `code128` draws a 1D barcode; `module_mm` sets the narrowest bar (default 0.3 mm).
-//! `{name}` in `text` / `data` is replaced with the field of the same name.
+//! `logo` draws a logo chosen per label, an image or a text stamp (see [`crate::label::logo`]).
+//! `{name}` in `text` / `data` and in a logo's `default = { text = ... }` is replaced with the
+//! field of the same name.
 //! `size` is a fraction of the printable height.
 //! When the rendered label is longer than `max_length_mm`, rendering fails
 //! instead of printing a label that does not fit.
 use crate::label::display::TapeDisplay;
 use crate::label::error::CodeKind;
 use crate::label::error::LabelError;
+use crate::label::logo::render_raster;
+use crate::label::logo::render_stamp;
+use crate::label::logo::Binarize;
+use crate::label::logo::DefaultLogo;
+use crate::label::logo::Logo;
+use crate::label::logo::StampStyle;
 use crate::label::px_to_mm;
 use crate::label::Label;
 use crate::label::LabelData;
+use crate::label::LogoChoice;
 use crate::Tape;
 use ab_glyph::point;
 use ab_glyph::Font;
@@ -45,11 +54,13 @@ use barcoders::sym::code128::Code128;
 use datamatrix::DataMatrix;
 use datamatrix::SymbolList;
 use image::Luma;
+use image::RgbaImage;
 use qrcode::QrCode;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Deserialize, Debug)]
 pub struct Template {
@@ -98,6 +109,25 @@ pub enum Column {
         #[serde(default = "default_size")]
         size: f32,
     },
+    /// An image or a text stamp chosen per label; see [`crate::label::logo`].
+    Logo {
+        /// name under which a label supplies the logo (`LabelData::logo`)
+        #[serde(default)]
+        slot: Option<String>,
+        /// used when the label supplies none
+        #[serde(default)]
+        default: Option<DefaultLogo>,
+        #[serde(default = "default_size")]
+        size: f32,
+        #[serde(default)]
+        binarize: Binarize,
+        /// swap black and white of image logos
+        #[serde(default)]
+        invert: bool,
+        /// how text logos are drawn; required when a text logo can reach this column
+        #[serde(default)]
+        stamp: Option<StampStyle>,
+    },
     Datamatrix {
         data: String,
         #[serde(default = "default_size")]
@@ -143,6 +173,14 @@ impl Template {
         Ok(t)
     }
 
+    /// Names of the logo columns' slots, i.e. what `LabelData::logo` can fill.
+    pub fn logo_slots(&self) -> impl Iterator<Item = &str> {
+        self.columns.iter().filter_map(|c| match c {
+            Column::Logo { slot, .. } => slot.as_deref(),
+            _ => None,
+        })
+    }
+
     pub fn load(path: impl AsRef<Path>) -> Result<Self, LabelError> {
         let path = path.as_ref();
         let s = std::fs::read_to_string(path).map_err(|source| LabelError::Io {
@@ -158,10 +196,12 @@ impl Template {
     /// The result is `tape.width_px()` px high.
     fn render_with(
         &self,
-        fonts: &HashMap<String, FontVec>,
-        fields: &HashMap<String, String>,
+        loaded: &Loaded,
+        data: &LabelData,
         tape: Tape,
     ) -> Result<TapeDisplay, LabelError> {
+        let fonts = &loaded.fonts;
+        let fields = &data.texts;
         let h = tape.width_px() as usize;
         let mut parts = Vec::new();
         for c in &self.columns {
@@ -182,8 +222,32 @@ impl Template {
                     center_vertical(&qr, h)
                 }
                 Column::Image { path, size } => {
-                    let img = render_image(&self.resolve(path), frac_px(h, *size))?;
-                    center_vertical(&img, h)
+                    let img = &loaded.images[&self.resolve(path)];
+                    let td = render_raster(img, frac_px(h, *size), Binarize::default(), false)?;
+                    center_vertical(&td, h)
+                }
+                Column::Logo {
+                    slot,
+                    default,
+                    size,
+                    binarize,
+                    invert,
+                    stamp,
+                } => {
+                    let logo = self.choose_logo(loaded, data, slot.as_deref(), default.as_ref())?;
+                    let px = frac_px(h, *size);
+                    let td = match &logo {
+                        Logo::Image(img) => render_raster(img, px, *binarize, *invert)?,
+                        Logo::Stamp(text) => {
+                            let style = stamp.as_ref().ok_or_else(|| {
+                                LabelError::InvalidTemplate(
+                                    "a text logo needs `stamp` on its logo column".to_string(),
+                                )
+                            })?;
+                            render_stamp(&fonts[&style.font], text, px, style)?
+                        }
+                    };
+                    center_vertical(&td, h)
                 }
                 Column::Code128 {
                     data,
@@ -220,6 +284,36 @@ impl Template {
         Ok(td)
     }
 
+    fn choose_logo(
+        &self,
+        loaded: &Loaded,
+        data: &LabelData,
+        slot: Option<&str>,
+        default: Option<&DefaultLogo>,
+    ) -> Result<Logo, LabelError> {
+        let registered = |key: &str| {
+            loaded
+                .logos
+                .get(key)
+                .cloned()
+                .ok_or_else(|| LabelError::UnknownLogo(key.to_string()))
+        };
+        match slot.and_then(|s| data.logos.get(s)) {
+            Some(LogoChoice::Inline(logo)) => Ok(logo.clone()),
+            Some(LogoChoice::Key(key)) => registered(key),
+            None => match default {
+                Some(DefaultLogo::Text { text }) => Ok(Logo::Stamp(expand(text, &data.texts)?)),
+                Some(DefaultLogo::Path { path }) => {
+                    Ok(Logo::Image(loaded.images[&self.resolve(path)].clone()))
+                }
+                Some(DefaultLogo::Key { key }) => registered(key),
+                None => Err(LabelError::MissingLogo(
+                    slot.unwrap_or_default().to_string(),
+                )),
+            },
+        }
+    }
+
     fn resolve(&self, path: &str) -> PathBuf {
         let p = Path::new(path);
         if p.is_absolute() {
@@ -233,7 +327,16 @@ impl Template {
 /// Renders labels from one template. Fonts are loaded once when the renderer is created.
 pub struct Renderer {
     template: Template,
+    loaded: Loaded,
+}
+
+/// Everything a render reads besides the template, loaded before the first render.
+struct Loaded {
     fonts: HashMap<String, FontVec>,
+    /// image files named by the template, by resolved path
+    images: HashMap<PathBuf, Arc<RgbaImage>>,
+    /// logos registered by the application
+    logos: HashMap<String, Logo>,
 }
 
 impl Renderer {
@@ -245,15 +348,67 @@ impl Renderer {
                 load_font(&template.resolve(&spec.path), spec.index)?,
             );
         }
-        // reject a misspelled font name now rather than on the first render
+        let mut images = HashMap::new();
+        // reject a misspelled font name or a logo column that can never draw now,
+        // rather than on the first render
         for c in &template.columns {
-            if let Column::Text { lines } = c {
-                if let Some(l) = lines.iter().find(|l| !fonts.contains_key(&l.font)) {
-                    return Err(LabelError::UnknownFont(l.font.clone()));
+            match c {
+                Column::Text { lines } => {
+                    if let Some(l) = lines.iter().find(|l| !fonts.contains_key(&l.font)) {
+                        return Err(LabelError::UnknownFont(l.font.clone()));
+                    }
                 }
+                Column::Image { path, .. } => {
+                    let path = template.resolve(path);
+                    let img = load_image(&path)?;
+                    images.insert(path, img);
+                }
+                Column::Logo {
+                    slot,
+                    default,
+                    stamp,
+                    ..
+                } => {
+                    if slot.is_none() && default.is_none() {
+                        return Err(LabelError::InvalidTemplate(
+                            "a logo column needs `slot` or `default`".to_string(),
+                        ));
+                    }
+                    if let Some(style) = stamp {
+                        if !fonts.contains_key(&style.font) {
+                            return Err(LabelError::UnknownFont(style.font.clone()));
+                        }
+                    }
+                    match default {
+                        Some(DefaultLogo::Text { .. }) if stamp.is_none() => {
+                            return Err(LabelError::InvalidTemplate(
+                                "a text default logo needs `stamp` on its logo column".to_string(),
+                            ));
+                        }
+                        Some(DefaultLogo::Path { path }) => {
+                            let path = template.resolve(path);
+                            let img = load_image(&path)?;
+                            images.insert(path, img);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
-        Ok(Self { template, fonts })
+        Ok(Self {
+            template,
+            loaded: Loaded {
+                fonts,
+                images,
+                logos: HashMap::new(),
+            },
+        })
+    }
+
+    /// Make a logo available to labels and to `default = { key = ... }` under this key.
+    pub fn register_logo(&mut self, key: impl Into<String>, logo: Logo) {
+        self.loaded.logos.insert(key.into(), logo);
     }
 
     pub fn template(&self) -> &Template {
@@ -261,7 +416,7 @@ impl Renderer {
     }
 
     pub fn render(&self, data: &LabelData, tape: Tape) -> Result<Label, LabelError> {
-        let bitmap = self.template.render_with(&self.fonts, &data.texts, tape)?;
+        let bitmap = self.template.render_with(&self.loaded, data, tape)?;
         Label::new(bitmap, tape)
     }
 }
@@ -320,12 +475,19 @@ fn load_font(path: &Path, index: u32) -> Result<FontVec, LabelError> {
     })
 }
 
-/// Render a single line of text whose line height (ascent - descent) is line_px.
-fn render_text(font: &FontVec, text: &str, line_px: usize) -> TapeDisplay {
+/// Lay out one line of text whose line height (ascent - descent) is line_px.
+/// The bitmap covers both the line box (advances x line height) and every glyph outline,
+/// so overhanging glyphs are kept. Also returns where the line box is in it:
+/// (left, top, width).
+fn rasterize_line(
+    font: &FontVec,
+    text: &str,
+    line_px: usize,
+) -> (TapeDisplay, usize, usize, usize) {
     // ab_glyph scales so that ascent - descent == PxScale
     let scale = PxScale::from(line_px as f32);
     let sf = font.as_scaled(scale);
-    let mut glyphs = Vec::new();
+    let mut outlines = Vec::new();
     let mut caret = 0.0f32;
     let mut prev: Option<GlyphId> = None;
     for c in text.chars() {
@@ -333,24 +495,54 @@ fn render_text(font: &FontVec, text: &str, line_px: usize) -> TapeDisplay {
         if let Some(p) = prev {
             caret += sf.kern(p, id);
         }
-        glyphs.push(id.with_scale_and_position(scale, point(caret, sf.ascent())));
+        let g = id.with_scale_and_position(scale, point(caret, sf.ascent()));
+        if let Some(og) = font.outline_glyph(g) {
+            outlines.push(og);
+        }
         caret += sf.h_advance(id);
         prev = Some(id);
     }
-    let mut td = TapeDisplay::new(caret.ceil() as usize, line_px);
-    for g in glyphs {
-        if let Some(og) = font.outline_glyph(g) {
-            let b = og.px_bounds();
-            og.draw(|x, y, cov| {
-                let px = b.min.x as i32 + x as i32;
-                let py = b.min.y as i32 + y as i32;
-                if cov >= 0.5 && px >= 0 && py >= 0 {
-                    td.set_pixel(px as usize, py as usize, true);
-                }
-            });
+    let (mut min_x, mut min_y) = (0i32, 0i32);
+    let (mut max_x, mut max_y) = (caret.ceil() as i32, line_px as i32);
+    for og in &outlines {
+        let b = og.px_bounds();
+        min_x = min_x.min(b.min.x.floor() as i32);
+        min_y = min_y.min(b.min.y.floor() as i32);
+        max_x = max_x.max(b.max.x.ceil() as i32);
+        max_y = max_y.max(b.max.y.ceil() as i32);
+    }
+    let mut td = TapeDisplay::new((max_x - min_x) as usize, (max_y - min_y) as usize);
+    for og in &outlines {
+        let b = og.px_bounds();
+        og.draw(|x, y, cov| {
+            if cov >= 0.5 {
+                let px = b.min.x as i32 + x as i32 - min_x;
+                let py = b.min.y as i32 + y as i32 - min_y;
+                td.set_pixel(px as usize, py as usize, true);
+            }
+        });
+    }
+    let box_width = caret.ceil() as usize;
+    (td, (-min_x) as usize, (-min_y) as usize, box_width)
+}
+
+/// One line of a text column, cut to its line box (advances x line height): every line
+/// keeps its origin at x = 0, so the lines of a column stay left-aligned even when a
+/// glyph such as `j` overhangs its advance.
+pub(crate) fn render_text(font: &FontVec, text: &str, line_px: usize) -> TapeDisplay {
+    let (full, left, top, width) = rasterize_line(font, text, line_px);
+    let mut td = TapeDisplay::new(width, line_px);
+    for y in 0..line_px {
+        for x in 0..width {
+            td.set_pixel(x, y, full.get_pixel(left + x, top + y));
         }
     }
     td
+}
+
+/// All the ink of one line of text, including parts above or below the line box.
+pub(crate) fn render_ink(font: &FontVec, text: &str, line_px: usize) -> TapeDisplay {
+    rasterize_line(font, text, line_px).0
 }
 
 fn render_qr(text: &str, size_px: usize) -> Result<TapeDisplay, LabelError> {
@@ -436,30 +628,12 @@ fn render_datamatrix(
     Ok(td)
 }
 
-/// Scale the image to height_px (keeping aspect) and binarize it.
-/// Dark opaque pixels are printed; transparent pixels are left blank.
-fn render_image(path: &Path, height_px: usize) -> Result<TapeDisplay, LabelError> {
-    let img = image::open(path)
-        .map_err(|e| LabelError::Image {
-            path: path.to_path_buf(),
-            reason: e.to_string(),
-        })?
-        .to_rgba8();
-    let width_px =
-        (img.width() as usize * height_px + img.height() as usize / 2) / img.height() as usize;
-    let img = image::imageops::resize(
-        &img,
-        width_px as u32,
-        height_px as u32,
-        image::imageops::FilterType::Triangle,
-    );
-    let mut td = TapeDisplay::new(width_px, height_px);
-    for (x, y, p) in img.enumerate_pixels() {
-        let [r, g, b, a] = p.0;
-        let luma = (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000;
-        td.set_pixel(x as usize, y as usize, a >= 128 && luma < 128);
-    }
-    Ok(td)
+fn load_image(path: &Path) -> Result<Arc<RgbaImage>, LabelError> {
+    let img = image::open(path).map_err(|e| LabelError::Image {
+        path: path.to_path_buf(),
+        reason: e.to_string(),
+    })?;
+    Ok(Arc::new(img.to_rgba8()))
 }
 
 #[cfg(test)]
@@ -490,6 +664,7 @@ mod tests {
         ) -> Result<TapeDisplay, LabelError> {
             let data = LabelData {
                 texts: fields.clone(),
+                ..Default::default()
             };
             Ok(Renderer::new(self)?.render(&data, tape)?.bitmap().clone())
         }
@@ -581,6 +756,51 @@ lines = [{ text = "{name}", font = "bold", size = 1.0 }]
             .expect_err("should be rejected")
             .to_string();
         assert!(err.contains("exceeds max_length_mm"), "{err}");
+    }
+
+    #[test]
+    fn glyphs_that_overhang_the_line_box_are_kept_whole() {
+        // ink outside the advance box or above/below the line used to be clipped
+        let font = load_font(Path::new(BOLD), 0).unwrap();
+        let line_px = 60;
+        let scale = PxScale::from(line_px as f32);
+        let mut overhanging = 0;
+        for c in ['j', 'f', 'g', 'Å', 'ʃ', '/', '_', 'Ç', 'ÿ', '貸'] {
+            let g = font
+                .as_scaled(scale)
+                .glyph_id(c)
+                .with_scale_and_position(scale, point(0.0, font.as_scaled(scale).ascent()));
+            let og = font.outline_glyph(g).unwrap();
+            let mut expected = 0;
+            og.draw(|_, _, cov| expected += (cov >= 0.5) as usize);
+            let b = og.px_bounds();
+            let advance = font.as_scaled(scale).h_advance(font.glyph_id(c));
+            if b.min.x < 0.0 || b.min.y < 0.0 || b.max.x > advance || b.max.y > line_px as f32 {
+                overhanging += 1;
+            }
+            let ink = |td: &TapeDisplay| td.framebuffer.iter().flatten().filter(|p| **p).count();
+            assert_eq!(
+                ink(&render_ink(&font, &c.to_string(), line_px)),
+                expected,
+                "{c}"
+            );
+            // a text column keeps only what lies inside the line box (advance x line height)
+            let mut within_line = 0;
+            og.draw(|x, y, cov| {
+                let px = b.min.x as i32 + x as i32;
+                let py = b.min.y as i32 + y as i32;
+                within_line += (cov >= 0.5
+                    && (0..advance.ceil() as i32).contains(&px)
+                    && (0..line_px as i32).contains(&py)) as usize;
+            });
+            assert_eq!(
+                ink(&render_text(&font, &c.to_string(), line_px)),
+                within_line,
+                "{c}"
+            );
+        }
+        // the set must contain glyphs that actually overhang, or it proves nothing
+        assert!(overhanging >= 3, "only {overhanging} glyphs overhang");
     }
 
     #[test]
@@ -722,7 +942,7 @@ lines = [{ text = "x", font = "nope", size = 0.5 }]
             };
         }
         img.save(&path).unwrap();
-        let td = render_image(&path, 2).unwrap();
+        let td = render_raster(&load_image(&path).unwrap(), 2, Binarize::default(), false).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!((td.width, td.height), (4, 2));
         assert!(td.get_pixel(0, 0));

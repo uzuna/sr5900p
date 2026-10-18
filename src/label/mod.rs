@@ -18,6 +18,7 @@
 //! ```
 pub mod display;
 pub mod error;
+pub mod logo;
 pub mod template;
 
 use crate::Tape;
@@ -43,6 +44,13 @@ pub fn px_to_mm(px: usize) -> f32 {
 #[derive(Clone, Debug, Default)]
 pub struct LabelData {
     pub(crate) texts: HashMap<String, String>,
+    pub(crate) logos: HashMap<String, LogoChoice>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum LogoChoice {
+    Key(String),
+    Inline(logo::Logo),
 }
 
 impl LabelData {
@@ -52,6 +60,18 @@ impl LabelData {
 
     pub fn text(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.texts.insert(name.into(), value.into());
+        self
+    }
+
+    /// Use the logo registered on the renderer under `key` for the logo column `slot`.
+    pub fn logo(mut self, slot: impl Into<String>, key: impl Into<String>) -> Self {
+        self.logos.insert(slot.into(), LogoChoice::Key(key.into()));
+        self
+    }
+
+    /// Use this logo for the logo column `slot`, without registering it.
+    pub fn logo_inline(mut self, slot: impl Into<String>, logo: logo::Logo) -> Self {
+        self.logos.insert(slot.into(), LogoChoice::Inline(logo));
         self
     }
 }

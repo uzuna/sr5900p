@@ -21,4 +21,6 @@ jobs:
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
       - run: cargo test
       - run: cargo test --no-default-features
+      # tests that are too slow in debug builds are ignored there and run here
+      - run: cargo test --release
       - run: make test

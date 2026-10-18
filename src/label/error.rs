@@ -14,6 +14,10 @@ pub enum LabelError {
     UnclosedPlaceholder(String),
     #[error("font '{0}' is not defined in [fonts]")]
     UnknownFont(String),
+    #[error("logo '{0}' is not registered")]
+    UnknownLogo(String),
+    #[error("no logo was given for slot '{0}' and the column has no default")]
+    MissingLogo(String),
     #[error("label is {length_mm:.1} mm long, which exceeds max_length_mm = {max_mm}")]
     TooLong { length_mm: f32, max_mm: f32 },
     #[error("failed to generate a {kind}: {reason}")]
