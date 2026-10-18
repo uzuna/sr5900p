@@ -6,6 +6,7 @@
 //! ```toml
 //! gap_mm = 1.5
 //! max_length_mm = 40
+//! tape = 12
 //!
 //! [fonts]
 //! bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
@@ -27,7 +28,9 @@
 //! `logo` draws a logo chosen per label, an image or a text stamp (see [`crate::label::logo`]).
 //! `{name}` in `text` / `data` and in a logo's `default = { text = ... }` is replaced with the
 //! field of the same name.
-//! `size` is a fraction of the printable height.
+//! `size` is a fraction of the printable height. A template can name the tape it is designed for
+//! (`tape`, in mm) so that its sizes stay fixed: rendering it for another tape is then an error.
+//! A template without `tape` renders on any tape, scaled to that tape's height.
 //! When the rendered label is longer than `max_length_mm`, rendering fails
 //! instead of printing a label that does not fit.
 use crate::label::display::TapeDisplay;
@@ -70,6 +73,10 @@ pub struct Template {
     /// upper limit of the label length (the printer's own margins are not included)
     #[serde(default)]
     pub max_length_mm: Option<f32>,
+    /// tape width in mm the template is designed for; sizes in the template are fractions of
+    /// that tape's printable height, so rendering for another tape would scale everything
+    #[serde(default)]
+    pub tape: Option<usize>,
     #[serde(default)]
     pub fonts: HashMap<String, FontSpec>,
     pub columns: Vec<Column>,
@@ -330,6 +337,8 @@ impl Template {
 /// Renders labels from one template. Fonts are loaded once when the renderer is created.
 pub struct Renderer {
     template: Template,
+    /// the tape the template is designed for, if it names one
+    tape: Option<Tape>,
     loaded: Loaded,
 }
 
@@ -399,8 +408,14 @@ impl Renderer {
                 _ => {}
             }
         }
+        let tape = template
+            .tape
+            .map(Tape::from_mm)
+            .transpose()
+            .map_err(|e| LabelError::InvalidTemplate(e.to_string()))?;
         Ok(Self {
             template,
+            tape,
             loaded: Loaded {
                 fonts,
                 images,
@@ -418,7 +433,20 @@ impl Renderer {
         &self.template
     }
 
+    /// The tape the template is designed for, if it names one.
+    pub fn tape(&self) -> Option<Tape> {
+        self.tape
+    }
+
     pub fn render(&self, data: &LabelData, tape: Tape) -> Result<Label, LabelError> {
+        if let Some(designed) = self.tape {
+            if designed != tape {
+                return Err(LabelError::TemplateTapeMismatch {
+                    template: designed,
+                    requested: tape,
+                });
+            }
+        }
         let bitmap = self.template.render_with(&self.loaded, data, tape)?;
         Label::new(bitmap, tape)
     }

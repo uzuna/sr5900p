@@ -1,0 +1,29 @@
+# 機材貸出用 社員IDカード: 用途ロゴ / 管理番号 + トークンのQR
+# token はサーバーで生成し、email と結びつける
+# 印刷する画像の長さの上限。超える文字は印刷せずにエラーにする
+max_length_mm = 50
+# 12mm テープ用。文字の大きさはこの幅で固定する(ほかの幅で描くとエラー)
+tape = 12
+
+[fonts]
+bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
+medium = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc" }
+black = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc" }
+
+# 用途ロゴ。アプリが slot "logo" へ部門・製品のロゴを差し込める。無ければ「貸出」のスタンプ
+[[columns]]
+type = "logo"
+slot = "logo"
+default = { text = "貸出" }
+stamp = { font = "black", vertical = true, invert = true, min_width_ratio = 1.0, padding_mm = 1.0 }
+
+[[columns]]
+type = "text"
+lines = [
+  { text = "機材貸出カード", font = "medium", size = 0.35 },
+  { text = "{card_id}", font = "bold", size = 0.6 },
+]
+
+[[columns]]
+type = "qr"
+data = "{token}"

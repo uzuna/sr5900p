@@ -1,6 +1,8 @@
 # 棚スロット: 棚スロットID / 配置可能種別 + スロットIDのQR
 # 印刷する画像の長さの上限。超える文字は印刷せずにエラーにする
 max_length_mm = 60
+# 12mm テープ用。文字の大きさはこの幅で固定する(ほかの幅で描くとエラー)
+tape = 12
 
 [fonts]
 bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
