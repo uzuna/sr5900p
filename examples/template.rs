@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         .collect();
     let td = template.render(&fields, tape)?;
     save_preview("example.png", &td)?;
-    // sr5900p::printer::print_display("192.168.11.16", &td)?; // to print
+    // sr5900p::printer::Printer::new("192.168.11.16".parse()?).print(&td)?; // to print
     println!("{} x {} px", td.width, td.height);
     Ok(())
 }
