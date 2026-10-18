@@ -1,10 +1,11 @@
+mod analyzer;
 mod cli;
 
+use analyzer::analyze_tcp_data;
 use anyhow::Result;
 use argh::FromArgs;
 use cli::do_print;
 use cli::PrintArgs;
-use sr5900p::printer::analyzer::analyze_tcp_data;
 use std::fs;
 
 #[derive(FromArgs, PartialEq, Debug)]

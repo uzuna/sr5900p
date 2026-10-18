@@ -1,3 +1,4 @@
+use crate::analyzer::analyze_tcp_data;
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
@@ -22,7 +23,6 @@ use sr5900p::label::display::TapeDisplay;
 use sr5900p::label::mm_to_px;
 use sr5900p::label::save_preview;
 use sr5900p::label::template::Template;
-use sr5900p::printer::analyzer::analyze_tcp_data;
 use sr5900p::printer::detect_tape;
 use sr5900p::printer::gen_tcp_data;
 use sr5900p::printer::print_tcp_data;

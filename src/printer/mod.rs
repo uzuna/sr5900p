@@ -1,5 +1,4 @@
 //! Talking to the printer over the network.
-pub mod analyzer;
 pub mod protocol;
 
 use crate::label::display::TapeDisplay;
