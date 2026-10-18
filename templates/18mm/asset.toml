@@ -1,0 +1,21 @@
+# 機材ラベル: 資産名 / 管理番号 / 管理部門 + 管理番号QR
+# 印刷する画像の長さの上限。超える文字は印刷せずにエラーにする
+max_length_mm = 90
+# 18mm テープ用。文字の大きさはこの幅で固定する(ほかの幅で描くとエラー)
+tape = 18
+
+[fonts]
+bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
+regular = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc" }
+
+[[columns]]
+type = "text"
+lines = [
+  { text = "{name}", font = "bold", size = 0.38 },
+  { text = "{id}", font = "bold", size = 0.33 },
+  { text = "{dept}", font = "regular", size = 0.27 },
+]
+
+[[columns]]
+type = "qr"
+data = "{id}"

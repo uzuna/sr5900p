@@ -6,7 +6,7 @@
 //! use sr5900p::Tape;
 //!
 //! // load the template and its fonts once
-//! let renderer = Renderer::new(Template::load("templates/shelf.toml")?)?;
+//! let renderer = Renderer::new(Template::load("templates/12mm/shelf.toml")?)?;
 //! let label = renderer.render(
 //!     &LabelData::new().text("dept", "開発部").text("shelf_id", "SH-A03"),
 //!     Tape::W12,

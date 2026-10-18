@@ -37,6 +37,8 @@ pub enum LabelError {
     Image { path: PathBuf, reason: String },
     #[error("failed to encode PNG: {0}")]
     Png(String),
+    #[error("the template is for {template:?} tape, not {requested:?}")]
+    TemplateTapeMismatch { template: Tape, requested: Tape },
     #[error("the bitmap is {height} px high but {tape:?} tape takes {} px", tape.width_px())]
     HeightMismatch { height: usize, tape: Tape },
 }

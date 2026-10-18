@@ -1,0 +1,20 @@
+# 棚スロット: 棚スロットID / 配置可能種別 + スロットIDのQR
+# 印刷する画像の長さの上限。超える文字は印刷せずにエラーにする
+max_length_mm = 90
+# 18mm テープ用。文字の大きさはこの幅で固定する(ほかの幅で描くとエラー)
+tape = 18
+
+[fonts]
+bold = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" }
+medium = { path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc" }
+
+[[columns]]
+type = "text"
+lines = [
+  { text = "{slot_id}", font = "bold", size = 0.6 },
+  { text = "種別: {kinds}", font = "medium", size = 0.38 },
+]
+
+[[columns]]
+type = "qr"
+data = "{slot_id}"

@@ -40,14 +40,17 @@ column's height so it stays sharp on every tape; binarized by threshold or dithe
 The application registers logos once (`Renderer::register_logo`) and picks one per label
 (`LabelData::logo`), or passes one inline (`LabelData::logo_inline`).
 The column can name a default (`{ text = ... }`, `{ path = ... }` or `{ key = ... }`).
-See `src/label/logo.rs` and `templates/card.toml`.
+See `src/label/logo.rs` and `templates/12mm/card.toml`.
 See `src/label/template.rs` for the format and `templates/` for examples.
+Templates are made per tape width (`templates/12mm/`, `templates/18mm/`) so that text sizes stay
+fixed: a template that names its tape (`tape = 12`) cannot be rendered for another tape.
+A template without `tape` renders on any tape, scaled to that tape's height.
 
 ```sh
-sr5900p print --dry-run --width 12 --template templates/shelf.toml \
+sr5900p print --dry-run --width 12 --template templates/12mm/shelf.toml \
   --field dept=開発部 --field shelf_id=SH-A03
 # logo columns take --logo-image slot=image.png or --stamp slot=text
-sr5900p print --dry-run --width 12 --template templates/card.toml \
+sr5900p print --dry-run --width 12 --template templates/12mm/card.toml \
   --field card_id=EMP-0123 --field token=abc --stamp logo=総務
 ```
 
@@ -66,7 +69,7 @@ use std::time::Duration;
 
 fn main() -> Result<(), sr5900p::Error> {
     // load the template and its fonts once, then render as many labels as needed
-    let renderer = Renderer::new(Template::load("templates/shelf.toml")?)?;
+    let renderer = Renderer::new(Template::load("templates/12mm/shelf.toml")?)?;
     let label = renderer.render(
         &LabelData::new().text("dept", "開発部").text("shelf_id", "SH-A03"),
         Tape::W12,
