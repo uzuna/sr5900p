@@ -20,6 +20,7 @@ use embedded_graphics::Drawable;
 use image::Luma;
 use qrcode::QrCode;
 use sr5900p::label::display::TapeDisplay;
+use sr5900p::label::logo::Logo;
 use sr5900p::label::mm_to_px;
 use sr5900p::label::template::Template;
 use sr5900p::label::Label;
@@ -188,13 +189,40 @@ fn print_template(args: &PrintArgs) -> Result<()> {
         .template
         .as_ref()
         .context("Please specify --template")?;
-    let renderer = Renderer::new(Template::load(path)?)?;
+    let template = Template::load(path)?;
+    // a misspelt slot would otherwise print the default logo without a word
+    let slots: Vec<String> = template.logo_slots().map(str::to_string).collect();
+    let check_slot = |slot: &str| -> Result<()> {
+        if slots.iter().any(|s| s == slot) {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "the template has no logo slot {slot:?} (slots: {slots:?})"
+            ))
+        }
+    };
+    let renderer = Renderer::new(template)?;
     let mut data = LabelData::new();
     for f in &args.field {
         let (k, v) = f
             .split_once('=')
             .ok_or_else(|| anyhow!("--field must be key=value: {f:?}"))?;
         data = data.text(k, v);
+    }
+    for l in &args.logo_image {
+        let (slot, path) = l
+            .split_once('=')
+            .ok_or_else(|| anyhow!("--logo-image must be slot=image-file: {l:?}"))?;
+        check_slot(slot)?;
+        let bytes = std::fs::read(path).with_context(|| format!("Failed to read {path}"))?;
+        data = data.logo_inline(slot, Logo::from_image_bytes(&bytes)?);
+    }
+    for s in &args.stamp {
+        let (slot, text) = s
+            .split_once('=')
+            .ok_or_else(|| anyhow!("--stamp must be slot=text: {s:?}"))?;
+        check_slot(slot)?;
+        data = data.logo_inline(slot, Logo::stamp(text));
     }
     let tape = determine_tape(args)?;
     print_label(args, &renderer.render(&data, tape)?)
@@ -346,6 +374,12 @@ pub struct PrintArgs {
     /// template field as key=value (repeatable)
     #[argh(option)]
     field: Vec<String>,
+    /// image for a logo column as slot=image-file (repeatable)
+    #[argh(option)]
+    logo_image: Vec<String>,
+    /// text stamp for a logo column as slot=text (repeatable)
+    #[argh(option)]
+    stamp: Vec<String>,
 }
 pub fn do_print(args: &PrintArgs) -> Result<()> {
     if args.test_pattern {

@@ -23,6 +23,8 @@ fn do_analyze(dump_file: &str) -> Result<()> {
 
 #[derive(FromArgs, PartialEq, Debug)]
 #[argh(subcommand)]
+// parsed once at start-up, so the size of the larger variant does not matter
+#[allow(clippy::large_enum_variant)]
 enum ArgsSubCommand {
     Analyze(AnalyzeArgs),
     Print(PrintArgs),
