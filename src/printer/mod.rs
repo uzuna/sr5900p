@@ -225,6 +225,11 @@ impl Printer {
                 Err(PrinterError::Timeout { .. }) if left().is_zero() => {
                     return Err(PrinterError::PrintTimeout(self.print_timeout))
                 }
+                // the label is being printed; failing here made callers print it a second time
+                Err(PrinterError::Timeout { .. }) => {
+                    log::warn!("status poll unanswered while printing; polling again");
+                    continue;
+                }
                 r => r?,
             };
             log::info!("{:?}", status);
