@@ -43,6 +43,15 @@ struct Behavior {
     silent_stop: bool,
     /// answer nothing at all
     silent: bool,
+    /// leave the first request of each of these commands unanswered (a lost packet)
+    lose_first: Vec<u32>,
+    /// leave this many status polls unanswered once the stream has arrived
+    lose_polls: usize,
+    /// before replying to this command, send a reply to status as if it came late
+    late_status_before: Option<u32>,
+    /// after replying to this command, send a spare idle status reply (a resent status
+    /// answered twice)
+    spare_idle_status_after: Option<u32>,
 }
 
 impl Default for Behavior {
@@ -57,6 +66,10 @@ impl Default for Behavior {
             slow_reader: false,
             silent_stop: false,
             silent: false,
+            lose_first: vec![],
+            lose_polls: 0,
+            late_status_before: None,
+            spare_idle_status_after: None,
         }
     }
 }
@@ -126,6 +139,8 @@ impl Fake {
         let udp_log = log.clone();
         thread::spawn(move || {
             let mut polls_left = behavior.printing_polls;
+            let mut lose_first = behavior.lose_first.clone();
+            let mut lose_polls = behavior.lose_polls;
             let mut buf = [0u8; 128];
             while let Ok((len, from)) = udp.recv_from(&mut buf) {
                 assert_eq!(len, 32);
@@ -138,6 +153,23 @@ impl Fake {
                     || (cmd == 3 && behavior.silent_stop)
                 {
                     continue;
+                }
+                if let Some(i) = lose_first.iter().position(|&c| c == cmd) {
+                    lose_first.remove(i);
+                    continue;
+                }
+                if cmd == 1 && lose_polls > 0 && *streamed.lock().unwrap() {
+                    lose_polls -= 1;
+                    continue;
+                }
+                if behavior.late_status_before == Some(cmd) {
+                    let mut late = b"tprt".to_vec();
+                    for v in [0u32, 1, 0x20, 1, 20, 0, 0] {
+                        late.extend_from_slice(&v.to_be_bytes());
+                    }
+                    late.extend_from_slice(&[20, 0, 0, TAPE_W12]);
+                    late.extend_from_slice(&[0; 16]);
+                    udp.send_to(&late, from).unwrap();
                 }
                 let body: Vec<u8> = match cmd {
                     1 => {
@@ -174,6 +206,15 @@ impl Fake {
                 }
                 res.extend_from_slice(&body);
                 udp.send_to(&res, from).unwrap();
+                if behavior.spare_idle_status_after == Some(cmd) {
+                    let mut spare = b"tprt".to_vec();
+                    for v in [0u32, 1, 0x20, 1, 20, 0, 0] {
+                        spare.extend_from_slice(&v.to_be_bytes());
+                    }
+                    spare.extend_from_slice(&[20, 0, 0, TAPE_W12]);
+                    spare.extend_from_slice(&[0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                    udp.send_to(&spare, from).unwrap();
+                }
             }
         });
         Fake { port, log }
@@ -333,7 +374,8 @@ fn print_returns_the_send_error_rather_than_the_stop_error() {
         matches!(&err, PrinterError::Protocol(m) if m.starts_with("confirm data stream")),
         "{err:?}"
     );
-    assert_eq!(fake.commands(), vec![1, 2, 0x0101, 0x0100, 3]);
+    // the unanswered stop is sent three times
+    assert_eq!(fake.commands(), vec![1, 2, 0x0101, 0x0100, 3, 3, 3]);
 }
 
 #[test]
@@ -354,7 +396,8 @@ fn print_sends_stop_when_the_start_reply_is_lost() {
         ),
         "{err:?}"
     );
-    assert_eq!(fake.commands(), vec![1, 2, 3]);
+    // start is sent three times before the step gives up
+    assert_eq!(fake.commands(), vec![1, 2, 2, 2, 3]);
 }
 
 #[test]
@@ -406,4 +449,85 @@ fn timeout_bounds_the_whole_raster_send() {
         "{err:?}"
     );
     assert_eq!(fake.commands().last(), Some(&3));
+}
+
+#[test]
+fn print_survives_one_lost_request_at_every_step() {
+    // Why: on a wired LAN the printer dropped some requests, and each lost reply ended the print.
+    // The fake answers a repeated start / stop with the same body as the first; an SR5900P did
+    // the same when sent start, start, stop, stop without a raster stream (2026-10-23)
+    // (how it answers a repeated 0x0101 / 0x0100 has not been seen)
+    let fake = Fake::start(Behavior {
+        lose_first: vec![1, 2, 0x0101, 0x0100, 3],
+        ..Default::default()
+    });
+    let td = label(Tape::W12);
+    fake.printer().print(&td).unwrap();
+    assert_eq!(
+        fake.commands(),
+        vec![1, 1, 2, 2, 0x0101, 0x0101, 0x0100, 0x0100, 1, 1, 1, 3, 3]
+    );
+    assert_eq!(fake.log.lock().unwrap().stream, gen_tcp_data(td.bitmap()));
+}
+
+#[test]
+fn print_keeps_polling_when_a_whole_poll_goes_unanswered() {
+    // Why: a print that had reached the printer returned an error, and printing it again
+    // produced a second label
+    let fake = Fake::start(Behavior {
+        lose_polls: 3,
+        ..Default::default()
+    });
+    fake.printer().print(&label(Tape::W12)).unwrap();
+    let cmds = fake.commands();
+    assert_eq!(cmds.last(), Some(&3));
+    // 3 lost sends of one poll, then 2 printing + 1 done
+    assert_eq!(
+        cmds.iter().filter(|&&c| c == 1).count(),
+        1 + 3 + 3,
+        "{cmds:?}"
+    );
+}
+
+#[test]
+fn a_late_reply_to_another_command_is_skipped() {
+    let fake = Fake::start(Behavior {
+        late_status_before: Some(0x0100),
+        ..Default::default()
+    });
+    fake.printer().print(&label(Tape::W12)).unwrap();
+    assert_eq!(fake.commands(), vec![1, 2, 0x0101, 0x0100, 1, 1, 1, 3]);
+}
+
+#[test]
+fn resending_stays_within_the_response_timeout() {
+    let fake = Fake::start(Behavior {
+        silent: true,
+        ..Default::default()
+    });
+    let started = std::time::Instant::now();
+    let err = fake.printer().status().unwrap_err();
+    assert!(
+        matches!(err, PrinterError::Timeout { step: "status", .. }),
+        "{err:?}"
+    );
+    // the fake printer's timeout is 300 ms; three full waits would take 900 ms
+    assert!(
+        started.elapsed() < Duration::from_millis(600),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(fake.commands(), vec![1, 1, 1]);
+}
+
+#[test]
+fn a_spare_reply_from_before_printing_does_not_end_the_wait() {
+    // an idle status left in the socket would read as "printing finished" on the first poll
+    let fake = Fake::start(Behavior {
+        spare_idle_status_after: Some(0x0100),
+        ..Default::default()
+    });
+    fake.printer().print(&label(Tape::W12)).unwrap();
+    // 2 printing polls + 1 done, as without the spare reply
+    assert_eq!(fake.commands(), vec![1, 2, 0x0101, 0x0100, 1, 1, 1, 3]);
 }

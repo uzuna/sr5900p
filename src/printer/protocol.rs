@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::slice;
 use std::time::Duration;
+use std::time::Instant;
 
 /// # Safety
 /// Implementing this trait is safe only when the target type can be converted
@@ -79,8 +80,17 @@ pub(super) fn timeout_or_io(e: io::Error, step: &'static str, timeout: Duration)
     }
 }
 
+/// How many times a request is sent before its step times out.
+/// The printer drops some requests on the network (seen on a wired LAN), so one lost reply
+/// must not end the step.
+const SENDS: u32 = 3;
+
 /// Send one request and return the body of the response.
 /// The socket must have a read timeout set, otherwise this blocks forever on a silent printer.
+/// The request is sent up to [`SENDS`] times, each waiting an equal share of the read timeout,
+/// so the whole call still takes at most the read timeout. Replies left over from earlier
+/// requests are dropped before sending, and replies to other commands that arrive while waiting
+/// are skipped (the reply header echoes the command).
 pub(super) fn request(
     socket: &UdpSocket,
     addr: SocketAddr,
@@ -90,13 +100,11 @@ pub(super) fn request(
     let timeout = socket
         .read_timeout()?
         .expect("the control socket must have a read timeout");
-    socket
-        .send_to(&PacketHeader::new_request(cmd, 0).copy_into_slice(), addr)
-        .map_err(|e| timeout_or_io(e, step, timeout))?;
     let mut buf = [0; 128];
-    let (len, _) = socket
-        .recv_from(&mut buf)
-        .map_err(|e| timeout_or_io(e, step, timeout))?;
+    let sent = send_until_answered(socket, addr, cmd, step, timeout, &mut buf);
+    // later requests on this socket keep the caller's timeout, also when sending failed
+    socket.set_read_timeout(Some(timeout))?;
+    let len = sent?;
     if len < size_of::<PacketHeader>() {
         return Err(PrinterError::Protocol(format!(
             "{step}: response too short {:?}",
@@ -109,6 +117,53 @@ pub(super) fn request(
         log::warn!("{step}: unexpected response signature {:?}", &buf[..4]);
     }
     Ok(buf[size_of::<PacketHeader>()..len].to_vec())
+}
+
+/// The sending part of [`request`]: returns the length of the reply in `buf`.
+/// Changes the socket's read timeout; [`request`] restores it.
+fn send_until_answered(
+    socket: &UdpSocket,
+    addr: SocketAddr,
+    cmd: u32,
+    step: &'static str,
+    timeout: Duration,
+    buf: &mut [u8; 128],
+) -> Result<usize, PrinterError> {
+    let share = (timeout / SENDS).max(Duration::from_millis(1));
+    // a resent request can be answered twice; the spare reply must not answer the next request
+    // (an idle status left from before printing would read as "printing finished")
+    socket.set_nonblocking(true)?;
+    while socket.recv_from(buf).is_ok() {
+        log::warn!("{step}: dropped a reply left from an earlier request");
+    }
+    socket.set_nonblocking(false)?;
+    for _ in 0..SENDS {
+        socket
+            .send_to(&PacketHeader::new_request(cmd, 0).copy_into_slice(), addr)
+            .map_err(|e| timeout_or_io(e, step, timeout))?;
+        let deadline = Instant::now() + share;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            socket.set_read_timeout(Some(left))?;
+            match socket.recv_from(buf) {
+                Ok((n, _))
+                    if n >= size_of::<PacketHeader>() && buf[16..20] != cmd.to_be_bytes() =>
+                {
+                    log::warn!("{step}: skipped a reply to another command");
+                }
+                Ok((n, _)) => return Ok(n),
+                Err(e) => match timeout_or_io(e, step, timeout) {
+                    PrinterError::Timeout { .. } => break,
+                    e => return Err(e),
+                },
+            }
+        }
+        log::warn!("{step}: no reply");
+    }
+    Err(PrinterError::Timeout { step, timeout })
 }
 
 pub(super) fn status(socket: &UdpSocket, addr: SocketAddr) -> Result<Status, PrinterError> {
